@@ -9,7 +9,7 @@ spec:
       - name: megatron-dataset-downloader
         image: alpine/git:2.40.1
         imagePullPolicy: IfNotPresent
-        command: ["bash", "-c"]
+        command: ["/bin/sh", "-c"]
         args:
         - |
           cd /mnt/pvc
