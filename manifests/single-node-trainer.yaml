@@ -7,9 +7,9 @@ spec:
     spec:
       containers:
       - name: megatron-train
-        image: nvcr.io/nvidia/pytorch:23.05-py3
+        image: nvcr.io/nvidia/pytorch:23.06-py3
         imagePullPolicy: IfNotPresent
-        command: ["bash", "-c", "/mnt/pvc/Megatron-LM/pretrain_single_node.sh"]
+        command: ["bash", "-c", "cd /mnt/pvc/coreweave-megatron && ./pretrain_single_node.sh"]
         tty: true
         securityContext:
           runAsUser: 0
@@ -46,6 +46,6 @@ spec:
               - key: gpu.nvidia.com/class
                 operator: In
                 values:
-                - A100_NVLINK_80GB
+                - A40
       restartPolicy: Never
   backoffLimit: 2
