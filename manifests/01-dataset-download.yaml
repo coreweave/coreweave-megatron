@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: megatron-dataset-download
+spec:
+  template:
+    spec:
+      containers:
+      - name: megatron-dataset-downloader
+        image: alpine/git:2.40.1
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          cd /mnt/pvc
+          git clone https://huggingface.co/datasets/hakurei/megatron-dev-dataset
+          git clone -b amercurio/manifests https://github.com/coreweave/coreweave-megatron
+        volumeMounts:
+          - name: megatron-dev
+            mountPath: /mnt/pvc
+        resources:
+          requests:
+            cpu: 1
+            memory: 1Gi 
+          limits:
+            cpu: 1
+            memory: 1Gi 
+      volumes:
+        - name: megatron-dev
+          persistentVolumeClaim:
+            claimName: megatron-dev
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: topology.kubernetes.io/region
+                operator: In
+                values: 
+                - LAS1
+      restartPolicy: Never
+  backoffLimit: 2
