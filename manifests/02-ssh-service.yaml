@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: megatron-ssh
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  ports:
+    - name: sshd
+      port: 22
+      protocol: TCP
+      targetPort: sshd
+  selector:
+    app.kubernetes.io/name: megatron-ssh
