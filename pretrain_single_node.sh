@@ -62,10 +62,16 @@ OUTPUT_ARGS="
     --eval-iters 10
 "
 
+LOG_ARGS="
+    --timing-log-level=1 \
+    --timing-log-option=all
+"
+
 torchrun $DISTRIBUTED_ARGS pretrain_gpt.py \
     $GPT_ARGS \
     $DATA_ARGS \
     $OUTPUT_ARGS \
+    $LOG_ARGS \
     --distributed-backend nccl \
     --save $CHECKPOINT_PATH \
     --load $CHECKPOINT_PATH
