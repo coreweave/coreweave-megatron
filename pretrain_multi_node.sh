@@ -55,6 +55,13 @@ DATA_ARGS="
     --split 949,50,1
 "
 
+OUTPUT_ARGS="
+    --log-interval 100 \
+    --save-interval 100 \
+    --eval-interval 1000 \
+    --eval-iters 10
+"
+
 LOG_ARGS="
     --timing-log-level=1 \
     --timing-log-option=all
