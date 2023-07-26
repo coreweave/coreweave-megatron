@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: megatron-train-job-single-node
+  name: megatron-train-job-0
 spec:
   template:
     spec:
@@ -24,12 +24,12 @@ spec:
         resources:
           requests:
             cpu: 32
-            memory: 256Gi
-            nvidia.com/gpu: 2
+            memory: 512Gi
+            nvidia.com/gpu: 8
           limits:
             cpu: 32
-            memory: 256Gi 
-            nvidia.com/gpu: 2
+            memory: 512Gi 
+            nvidia.com/gpu: 8
       volumes:
         - name: megatron-dev
           persistentVolumeClaim:
@@ -56,7 +56,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: megatron-train-job-single-node
+  name: megatron-train-job-1
 spec:
   template:
     spec:
@@ -79,12 +79,12 @@ spec:
         resources:
           requests:
             cpu: 32
-            memory: 256Gi
-            nvidia.com/gpu: 2
+            memory: 512Gi
+            nvidia.com/gpu: 8
           limits:
             cpu: 32
-            memory: 256Gi 
-            nvidia.com/gpu: 2
+            memory: 512Gi 
+            nvidia.com/gpu: 8
       volumes:
         - name: megatron-dev
           persistentVolumeClaim:

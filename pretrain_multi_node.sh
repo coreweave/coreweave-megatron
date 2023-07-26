@@ -4,11 +4,11 @@
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-GPUS_PER_NODE=2
+GPUS_PER_NODE=8
 # Change for multinode config
 MASTER_ADDR=localhost
 MASTER_PORT=6000
-NNODES=4
+NNODES=2
 # NODE_RANK=0
 WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 
@@ -55,17 +55,16 @@ DATA_ARGS="
     --split 949,50,1
 "
 
-OUTPUT_ARGS="
-    --log-interval 100 \
-    --save-interval 100 \
-    --eval-interval 1000 \
-    --eval-iters 10
+LOG_ARGS="
+    --timing-log-level=1 \
+    --timing-log-option=all
 "
 
 torchrun $DISTRIBUTED_ARGS pretrain_gpt.py \
     $GPT_ARGS \
     $DATA_ARGS \
     $OUTPUT_ARGS \
+    $LOG_ARGS \
     --distributed-backend nccl \
     --save $CHECKPOINT_PATH \
     --load $CHECKPOINT_PATH
