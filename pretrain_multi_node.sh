@@ -21,9 +21,9 @@ GPT_ARGS="
     --tensor-model-parallel-size 2 \
     --pipeline-model-parallel-size 2 \
     --sequence-parallel \
-    --num-layers 32 \
-    --hidden-size 4096 \
-    --num-attention-heads 32 \
+    --num-layers 16 \
+    --hidden-size 1024 \
+    --num-attention-heads 16 \
     --seq-length 1024 \
     --max-position-embeddings 1024 \
     --micro-batch-size 4 \
