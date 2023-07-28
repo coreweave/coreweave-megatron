@@ -4,14 +4,6 @@
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-GPUS_PER_NODE=8
-# Change for multinode config
-MASTER_ADDR=localhost
-MASTER_PORT=6000
-NNODES=2
-# NODE_RANK=0
-WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
-
 CHECKPOINT_PATH=/mnt/pvc/checkpoints
 VOCAB_FILE=/mnt/pvc/megatron-dev-dataset/gpt2-vocab.json
 MERGE_FILE=/mnt/pvc/megatron-dev-dataset/gpt2-merges.txt
@@ -19,7 +11,7 @@ DATA_PATH=/mnt/pvc/megatron-dev-dataset/gpt2c4_text_document
 
 DISTRIBUTED_ARGS="
     --nproc_per_node $GPUS_PER_NODE \
-    --nnodes $NNODES \
+    --nnodes $(($WORLD_SIZE*$GPUS_PER_NODE)) \
     --node_rank $NODE_RANK \
     --master_addr $MASTER_ADDR \
     --master_port $MASTER_PORT
