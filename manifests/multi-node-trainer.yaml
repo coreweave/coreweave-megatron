@@ -16,11 +16,20 @@ spec:
             image: nvcr.io/nvidia/pytorch:23.06-py3
             imagePullPolicy: IfNotPresent
             command:
-            - "/mnt/pvc/coreweave-megatron/pretrain_multi_node.sh"
+            - "/bin/bash"
+            - "-c"
+            - "cd /mnt/pvc/coreweave-megatron && ./pretrain_multi_node.sh"
             tty: true
             env:
             - name: GPUS_PER_NODE
               value: "1"
+            # Model Config, you can find values here: https://arxiv.org/pdf/2005.14165.pdf
+            - name: N_LAYERS
+              value: "12"
+            - name: D_MODEL
+              value: "768"
+            - name: N_HEADS
+              value: "12"
             securityContext:
               runAsUser: 0
             volumeMounts:
@@ -59,7 +68,7 @@ spec:
                     - A40
           restartPolicy: Never
     Worker:
-      replicas: 1
+      replicas: 16
       template:
         metadata:
           annotations:
@@ -70,11 +79,20 @@ spec:
             image: nvcr.io/nvidia/pytorch:23.06-py3
             imagePullPolicy: IfNotPresent
             command:
-            - "/mnt/pvc/coreweave-megatron/pretrain_multi_node.sh"
+            - "/bin/bash"
+            - "-c"
+            - "cd /mnt/pvc/coreweave-megatron && ./pretrain_multi_node.sh"
             tty: true
             env:
             - name: GPUS_PER_NODE
               value: "1"
+            # Model Config, you can find values here: https://arxiv.org/pdf/2005.14165.pdf
+            - name: N_LAYERS
+              value: "12"
+            - name: D_MODEL
+              value: "768"
+            - name: N_HEADS
+              value: "12"
             securityContext:
               runAsUser: 0
             volumeMounts:
