@@ -12,7 +12,7 @@ DATA_PATH=/mnt/pvc/megatron-dev-dataset/gpt2c4_text_document
 DISTRIBUTED_ARGS="
     --nproc_per_node $GPUS_PER_NODE \
     --nnodes $(($WORLD_SIZE*$GPUS_PER_NODE)) \
-    --node_rank $NODE_RANK \
+    --node_rank $RANK \
     --master_addr $MASTER_ADDR \
     --master_port $MASTER_PORT
 "

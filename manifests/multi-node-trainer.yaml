@@ -12,7 +12,7 @@ spec:
             sidecar.istio.io/inject: "false"
         spec:
           containers:
-          - name: megatron-train
+          - name: pytorch
             image: nvcr.io/nvidia/pytorch:23.06-py3
             imagePullPolicy: IfNotPresent
             command:
@@ -20,7 +20,7 @@ spec:
             tty: true
             env:
             - name: GPUS_PER_NODE
-              value: "2"
+              value: "1"
             securityContext:
               runAsUser: 0
             volumeMounts:
@@ -59,14 +59,14 @@ spec:
                     - A40
           restartPolicy: Never
     Worker:
-      replicas: 2
+      replicas: 1
       template:
         metadata:
           annotations:
             sidecar.istio.io/inject: "false"
         spec:
           containers:
-          - name: megatron-train
+          - name: pytorch
             image: nvcr.io/nvidia/pytorch:23.06-py3
             imagePullPolicy: IfNotPresent
             command:
@@ -74,7 +74,7 @@ spec:
             tty: true
             env:
             - name: GPUS_PER_NODE
-              value: "2"
+              value: "1"
             securityContext:
               runAsUser: 0
             volumeMounts:
