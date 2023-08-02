@@ -18,7 +18,7 @@ spec:
             command:
             - "/bin/bash"
             - "-c"
-            - "cd /mnt/pvc/coreweave-megatron && ./pretrain_multi_node.sh"
+            - "cd /mnt/pvc/coreweave-megatron && rm -rf ../checkpoints && ./pretrain_multi_node.sh"
             tty: true
             env:
             - name: GPUS_PER_NODE
@@ -40,11 +40,11 @@ spec:
             resources:
               requests:
                 cpu: 32
-                memory: 512Gi
+                memory: 128Gi
                 nvidia.com/gpu: 1
               limits:
                 cpu: 32
-                memory: 512Gi 
+                memory: 128Gi 
                 nvidia.com/gpu: 1
           volumes:
             - name: megatron-dev
@@ -68,7 +68,7 @@ spec:
                     - A40
           restartPolicy: Never
     Worker:
-      replicas: 16
+      replicas: 3
       template:
         metadata:
           annotations:
@@ -81,7 +81,7 @@ spec:
             command:
             - "/bin/bash"
             - "-c"
-            - "cd /mnt/pvc/coreweave-megatron && ./pretrain_multi_node.sh"
+            - "cd /mnt/pvc/coreweave-megatron && rm -rf ../checkpoints && ./pretrain_multi_node.sh"
             tty: true
             env:
             - name: GPUS_PER_NODE
@@ -103,11 +103,11 @@ spec:
             resources:
               requests:
                 cpu: 32
-                memory: 512Gi
+                memory: 128Gi
                 nvidia.com/gpu: 1
               limits:
                 cpu: 32
-                memory: 512Gi 
+                memory: 128Gi 
                 nvidia.com/gpu: 1
           volumes:
             - name: megatron-dev
