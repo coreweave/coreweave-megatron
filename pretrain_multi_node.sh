@@ -23,8 +23,8 @@ GPT_ARGS="
     --num-attention-heads $N_HEADS \
     --seq-length 1024 \
     --max-position-embeddings 1024 \
-    --micro-batch-size 4 \
-    --global-batch-size 16 \
+    --micro-batch-size $M_BS \
+    --global-batch-size $G_BS \
     --lr 0.00015 \
     --train-iters 500000 \
     --lr-decay-iters 320000 \

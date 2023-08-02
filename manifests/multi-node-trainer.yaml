@@ -30,6 +30,10 @@ spec:
               value: "768"
             - name: N_HEADS
               value: "12"
+            - name: M_BS
+              value: "1"
+            - name: G_BS
+              value: "16"
             securityContext:
               runAsUser: 0
             volumeMounts:
@@ -93,6 +97,10 @@ spec:
               value: "768"
             - name: N_HEADS
               value: "12"
+            - name: M_BS
+              value: "1"
+            - name: G_BS
+              value: "16"
             securityContext:
               runAsUser: 0
             volumeMounts:
