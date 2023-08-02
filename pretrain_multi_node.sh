@@ -18,9 +18,6 @@ DISTRIBUTED_ARGS="
 "
 
 GPT_ARGS="
-    --tensor-model-parallel-size 2 \
-    --pipeline-model-parallel-size 2 \
-    --sequence-parallel \
     --num-layers $N_LAYERS \
     --hidden-size $D_MODEL \
     --num-attention-heads $N_HEADS \
