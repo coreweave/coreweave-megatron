@@ -18,13 +18,16 @@ DISTRIBUTED_ARGS="
 "
 
 GPT_ARGS="
-    --num-layers $N_LAYERS \
-    --hidden-size $D_MODEL \
-    --num-attention-heads $N_HEADS \
+    --tensor-model-parallel-size 2 \
+    --pipeline-model-parallel-size 2 \
+    --sequence-parallel \
+    --num-layers 32 \
+    --hidden-size 4096 \
+    --num-attention-heads 32 \
     --seq-length 1024 \
     --max-position-embeddings 1024 \
-    --micro-batch-size 8 \
-    --global-batch-size 64 \
+    --micro-batch-size 4 \
+    --global-batch-size 16 \
     --lr 0.00015 \
     --train-iters 500000 \
     --lr-decay-iters 320000 \
