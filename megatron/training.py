@@ -22,8 +22,8 @@ from megatron import update_num_microbatches
 from megatron.core import mpu, tensor_parallel
 from megatron import print_rank_0
 from megatron import print_rank_last
-from megatron.checkpointing import load_checkpoint
-from megatron.checkpointing import save_checkpoint
+from megatron.checkpointing import load_checkpoint, load_checkpoint_tensorizer
+from megatron.checkpointing import save_checkpoint, save_checkpoint_tensorizer
 from megatron.model import Float16Module
 from megatron.model import GPTModel
 from megatron.core.enums import ModelType
@@ -385,7 +385,10 @@ def setup_model_and_optimizer(model_provider_func,
     if args.load is not None:
         timers = get_timers()
         timers('load-checkpoint', log_level=0).start(barrier=True)
-        args.iteration = load_checkpoint(model, optimizer, opt_param_scheduler)
+        if not args.use_tensorizer:
+            args.iteration = load_checkpoint(model, optimizer, opt_param_scheduler)
+        else:
+            args.iteration = load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler)
         timers('load-checkpoint').stop(barrier=True)
         timers.log(['load-checkpoint'])
     else:
@@ -669,10 +672,14 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
 
 def save_checkpoint_and_time(iteration, model, optimizer, opt_param_scheduler):
     timers = get_timers()
+    args = get_args()
     # Extra barrier is added to make sure
     # all ranks report the max time.
     timers('save-checkpoint', log_level=0).start(barrier=True)
-    save_checkpoint(iteration, model, optimizer, opt_param_scheduler)
+    if not args.use_tensorizer:
+        save_checkpoint(iteration, model, optimizer, opt_param_scheduler)
+    else:
+        save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
     timers('save-checkpoint').stop(barrier=True)
     timers.log(['save-checkpoint'])
 

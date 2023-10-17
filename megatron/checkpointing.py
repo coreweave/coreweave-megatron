@@ -6,6 +6,7 @@ import os
 import random
 import sys
 import numpy as np
+import json
 
 import torch
 
@@ -14,6 +15,8 @@ from megatron.core import mpu, tensor_parallel
 from .global_vars import get_args
 from .utils import (unwrap_model,
                     print_rank_0)
+
+from tensorizer import TensorDeserializer, TensorSerializer, stream_io
 
 
 _CHECKPOINT_VERSION = None
@@ -211,6 +214,386 @@ def get_rng_state():
     return rng_state_list
 
 
+def _load_base_checkpoint_tensorizer(load_dir, rank0=False):
+    """ Load a tensorized checkpoint.
+
+    If rank0 is true, just loads rank 0 tensorizer checkpoint, ignoring arguments.
+    """
+
+    # Read the tracker file and set the iteration.
+    tracker_filename = get_checkpoint_tracker_filename(load_dir)
+
+    # If no tracker file, return nothing
+    if not os.path.isfile(tracker_filename):
+        if not rank0:
+            print_rank_0('WARNING: could not find the metadata file {} '.format(
+                tracker_filename))
+            print_rank_0('    will not load any tensorizer checkpoints and will start from '
+                         'random')
+        return None, False, None
+
+    # Otherwise, read the tracker file and either set the iteration or
+    # mark it as a release checkpoint.
+    iteration, release = read_metadata(tracker_filename)
+
+    # Checkpoint.
+    if rank0:
+        checkpoint_name = find_checkpoint_rank_0(load_dir, iteration, release)
+    else:
+        checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
+        if release:
+            print_rank_0(f' loading tensorizer release checkpoint from {load_dir}')
+        else:
+            print_rank_0(f' loading tensorizer checkpoint from {load_dir} at iteration {iteration}')
+
+    # Load the checkpoint. This is torch-specific state data.
+    try:
+        state_dict = torch.load(checkpoint_name, map_location='cpu')
+    except BaseException as e:
+        print_rank_0('could not load the tensorizer checkpoint')
+        print_rank_0(e)
+        sys.exit()
+
+    return state_dict, release, checkpoint_name
+
+
+def flatten_dict_to_skeleton(d, parent_key=''):
+    flat, skel = {}, {}
+    if isinstance(d, dict):
+        for k, v in d.items():
+            new_key = f"{parent_key}.{k}" if parent_key else k
+            sub_flat, sub_skel = flatten_dict_to_skeleton(v, new_key)
+            flat.update(sub_flat)
+            skel[k] = sub_skel
+    elif isinstance(d, list):
+        skel_list = []
+        for idx, item in enumerate(d):
+            list_key = f"{parent_key}.{idx}"
+            sub_flat, sub_skel = flatten_dict_to_skeleton(item, list_key)
+            flat.update(sub_flat)
+            skel_list.append(sub_skel)
+        return flat, skel_list
+    else:
+        if isinstance(d, torch.Tensor):
+            flat[parent_key] = d
+            return flat, None
+        else:
+            return flat, d
+    return flat, skel
+
+
+
+def unflatten_to_skeleton(flat, skel):
+    for k, v in flat.items():
+        keys, d = k.split("."), skel
+        for key in keys[:-1]:
+            if isinstance(d, list):
+                d = d[int(key)]
+            elif isinstance(d, dict):
+                d = d.setdefault(key, {})
+        if isinstance(d, list):
+            d[int(keys[-1])] = v
+        else:
+            d[keys[-1]] = v
+    return skel
+
+
+def convert_parameters_to_tensors(d):
+    if isinstance(d, dict):
+        for k, v in d.items():
+            if isinstance(v, torch.nn.Parameter):
+                d[k] = v.data
+            else:
+                convert_parameters_to_tensors(v)
+    elif isinstance(d, list):
+        for idx, item in enumerate(d):
+            if isinstance(item, torch.nn.Parameter):
+                d[idx] = item.data
+            else:
+                convert_parameters_to_tensors(item)
+
+
+def dump_optimizer(opt, checkpoint_name):
+    flattened, skeleton = flatten_dict_to_skeleton(opt.state_dict())
+    serializer = TensorSerializer(stream_io.open_stream(f'{checkpoint_name}-opt.tensors', 'wb+', buffer_size=0))
+    serializer.write_state_dict(flattened)
+    serializer.close()
+    json.dump(skeleton, fp=open(f'{checkpoint_name}-opt.json', 'w'))
+
+
+def load_optimizer(checkpoint_name):
+    opt_state_dict = json.load(fp=open(f'{checkpoint_name}-opt.json', 'r'))
+    deserializer = TensorDeserializer(open(f'{checkpoint_name}-opt.tensors', 'rb'))
+    opt_state_dict = unflatten_to_skeleton(deserializer, opt_state_dict)
+    convert_parameters_to_tensors(opt_state_dict)
+    deserializer.close()
+    return opt_state_dict
+    
+
+def map_model_main_grad_to_parameters(model):
+    main_grads = {}
+    for name, param in model.named_parameters():
+        if hasattr(param, 'main_grad'):
+            main_grads[name] = param.main_grad
+    return main_grads
+
+
+def dump_main_grads(model, checkpoint_name):
+    main_grads = map_model_main_grad_to_parameters(model)
+    serializer = TensorSerializer(stream_io.open_stream(f'{checkpoint_name}-grad.tensors', 'wb+', buffer_size=0))
+    serializer.write_state_dict(main_grads)
+    serializer.close()
+
+
+def load_main_grads(model, checkpoint_name):
+    deserializer = TensorDeserializer(open(f'{checkpoint_name}-grad.tensors', 'rb'))
+    for name, param in model.named_parameters():
+        if name in deserializer:
+            main_grad_value = deserializer[name]
+            if isinstance(main_grad_value, torch.nn.Parameter):
+                main_grad_value = main_grad_value.data
+            param.main_grad = main_grad_value
+            print(f"initialized main_grad for {name} with shape {param.main_grad.shape}")
+        else:
+            print(f"main_grad not found for {name}")
+    deserializer.close()
+
+
+def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler):
+    """Save a model checkpoint."""
+    args = get_args()
+
+    # Only rank zero of the data parallel writes to the disk.
+    model = unwrap_model(model)
+
+    print_rank_0('saving checkpoint at iteration {:7d} to {}'.format(
+        iteration, args.save))
+
+    # Collect rng state across data parallel ranks.
+    rng_state = get_rng_state()
+
+    # Checkpoint name.
+    checkpoint_name = get_checkpoint_name(args.save, iteration)
+
+    # Save distributed optimizer's custom parameter state.
+    if args.use_distributed_optimizer:
+        optim_checkpoint_name = \
+            get_distributed_optimizer_checkpoint_name(checkpoint_name)
+        ensure_directory_exists(optim_checkpoint_name)
+        optimizer.save_parameter_state(optim_checkpoint_name)
+
+    # Collect args, model, RNG.
+    if not torch.distributed.is_initialized() \
+       or mpu.get_data_parallel_rank() == 0:
+
+        ensure_directory_exists(checkpoint_name)
+
+        # Save torch specific state
+        torch_state = {}
+        torch_state['args'] = args
+        torch_state['checkpoint_version'] = 3.0
+        torch_state['iteration'] = iteration
+
+        # Optimizer stuff.
+        if not args.no_save_optim:
+            if optimizer is not None:
+                dump_optimizer(optimizer, checkpoint_name)
+            if opt_param_scheduler is not None:
+                torch_state['opt_param_scheduler'] = \
+                    opt_param_scheduler.state_dict()
+
+        # RNG states.
+        if not args.no_save_rng:
+            torch_state["rng_state"] = rng_state
+
+        torch.save(torch_state, f"{checkpoint_name}") # TODO: Serialize in JSON.
+
+        if len(model) == 1:
+            serializer = TensorSerializer(f"{checkpoint_name}.tensors")
+            serializer.write_module(model[0])
+            serializer.close()
+            dump_main_grads(model[0], f"{checkpoint_name}.tensors")
+        else:
+            for i in range(len(model)):
+                serializer = TensorSerializer(f"{checkpoint_name}_shard{i}.tensors")
+                mpu.set_virtual_pipeline_model_parallel_rank(i)
+                serializer.write_module(model[i])
+                serializer.close()
+                dump_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
+
+    # Wait so everyone is done (necessary)
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}' \
+                 .format(iteration, args.save))
+
+    # And update the latest iteration
+    if not torch.distributed.is_initialized() \
+       or torch.distributed.get_rank() == 0:
+        tracker_filename = get_checkpoint_tracker_filename(args.save)
+        with open(tracker_filename, 'w') as f:
+            f.write(str(iteration))
+
+    # Wait so everyone is done (not necessary)
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='load', strict=True):
+    """Load a model checkpoint and return the iteration.
+    strict (bool): whether to strictly enforce that the keys in
+        :attr:`state_dict` of the checkpoint match the names of
+        parameters and buffers in model.
+    """
+    args = get_args()
+    load_dir = getattr(args, load_arg)
+
+    model = unwrap_model(model)
+
+    state_dict, release, checkpoint_name = _load_base_checkpoint_tensorizer(load_dir, rank0=False)
+
+    # Checkpoint not loaded.
+    if state_dict is None:
+
+        # Conditionally exit at this point.
+        if args.exit_on_missing_checkpoint:
+            print_rank_0(">> '--exit-on-missing-checkpoint' set ... exiting. <<")
+            torch.distributed.barrier()
+            sys.exit()
+
+        # Iteration defaults to 0.
+        return 0
+
+    # Set checkpoint version.
+    set_checkpoint_version(state_dict.get('checkpoint_version', 0))
+
+    # Set iteration.
+    if args.finetune or release:
+        iteration = 0
+    else:
+        try:
+            iteration = state_dict['iteration']
+        except KeyError:
+            try:  # Backward compatible with older checkpoints
+                iteration = state_dict['total_iters']
+            except KeyError:
+                print_rank_0('A metadata file exists but unable to load '
+                             'iteration from checkpoint {}, exiting'.format(
+                                 checkpoint_name))
+                sys.exit()
+
+    # Check arguments.
+    assert args.consumed_train_samples == 0
+    assert args.consumed_valid_samples == 0
+    if 'args' in state_dict and not args.finetune:
+        checkpoint_args = state_dict['args']
+        check_checkpoint_args(checkpoint_args)
+        args.consumed_train_samples = getattr(checkpoint_args,
+                                              'consumed_train_samples', 0)
+        update_num_microbatches(consumed_samples=args.consumed_train_samples)
+        args.consumed_valid_samples = getattr(checkpoint_args,
+                                              'consumed_valid_samples', 0)
+    else:
+        print_rank_0('could not find arguments in the checkpoint ...')
+
+    # Model.
+    if len(model) == 1:
+        deserializer = TensorDeserializer(f"{checkpoint_name}.tensors")
+        deserializer.load_into_module(model[0])
+        deserializer.close()
+        load_main_grads(model[0], f"{checkpoint_name}.tensors")
+    else:
+        for i in range(len(model)):
+            deserializer = TensorDeserializer(f"{checkpoint_name}_shard{i}.tensors")
+            mpu.set_virtual_pipeline_model_parallel_rank(i)
+            deserializer.load_into_module(model[i])
+            deserializer.close()
+            load_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
+
+    # Fix up query/key/value matrix ordering if needed.
+    checkpoint_version = get_checkpoint_version()
+    print_rank_0(f' checkpoint version {checkpoint_version}')
+    fix_query_key_value_ordering(model, checkpoint_version)
+
+    # Optimizer.
+    if not release and not args.finetune and not args.no_load_optim:
+        try:
+            # Load state dict.
+            if optimizer is not None:
+                optimizer.load_state_dict(load_optimizer(checkpoint_name))
+
+            # Load distributed optimizer's custom parameter state.
+            if args.use_distributed_optimizer:
+                tracker_filename = get_checkpoint_tracker_filename(load_dir)
+                iteration, release = read_metadata(tracker_filename)
+                model_checkpoint_name = \
+                    get_checkpoint_name(load_dir, iteration, release)
+                optim_checkpoint_name = \
+                    get_distributed_optimizer_checkpoint_name(
+                        model_checkpoint_name)
+                optimizer.load_parameter_state(optim_checkpoint_name)
+
+            # Load scheduler.
+            if opt_param_scheduler is not None:
+                if 'lr_scheduler' in state_dict: # backward compatbility
+                    opt_param_scheduler.load_state_dict(state_dict['lr_scheduler'])
+                else:
+                    opt_param_scheduler.load_state_dict(state_dict['opt_param_scheduler'])
+        except KeyError:
+            print_rank_0('Unable to load optimizer from checkpoint {}. '
+                         'Specify --no-load-optim or --finetune to prevent '
+                         'attempting to load the optimizer state, '
+                         'exiting ...'.format(checkpoint_name))
+            sys.exit()
+    else:
+        if (args.fp16 or args.bf16) and optimizer is not None:
+            optimizer.reload_model_params()
+
+    # rng states.
+    if not release and not args.finetune and not args.no_load_rng:
+        try:
+            if 'rng_state' in state_dict:
+                # access rng_state for data parallel rank
+                if args.data_parallel_random_init:
+
+                    rng_state = state_dict['rng_state'][mpu.get_data_parallel_rank()]
+                else:
+                    rng_state = state_dict['rng_state'][0]
+                random.setstate(rng_state['random_rng_state'])
+                np.random.set_state(rng_state['np_rng_state'])
+                torch.set_rng_state(rng_state['torch_rng_state'])
+                torch.cuda.set_rng_state(rng_state['cuda_rng_state'])
+                # Check for empty states array
+                if not rng_state['rng_tracker_states']:
+                    raise KeyError
+                tensor_parallel.get_cuda_rng_tracker().set_states(
+                    rng_state['rng_tracker_states'])
+            else:  # backward compatability
+                random.setstate(state_dict['random_rng_state'])
+                np.random.set_state(state_dict['np_rng_state'])
+                torch.set_rng_state(state_dict['torch_rng_state'])
+                torch.cuda.set_rng_state(state_dict['cuda_rng_state'])
+                # Check for empty states array
+                if not state_dict['rng_tracker_states']:
+                    raise KeyError
+                tensor_parallel.get_cuda_rng_tracker().set_states(
+                    state_dict['rng_tracker_states'])
+        except KeyError:
+            print_rank_0('Unable to load rng state from checkpoint {}. '
+                         'Specify --no-load-rng or --finetune to prevent '
+                         'attempting to load the rng state, '
+                         'exiting ...'.format(checkpoint_name))
+            sys.exit()
+
+    # Some utilities want to load a checkpoint without distributed being initialized
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+    print_rank_0(f'  successfully loaded checkpoint from {args.load} '
+                 f'at iteration {iteration}')
+
+    return iteration
+
 def save_checkpoint(iteration, model, optimizer, opt_param_scheduler):
     """Save a model checkpoint."""
     args = get_args()
@@ -371,7 +754,7 @@ def _load_base_checkpoint(load_dir, rank0=False):
                 tracker_filename))
             print_rank_0('    will not load any checkpoints and will start from '
                          'random')
-        return None, False
+        return None, False, None
 
     # Otherwise, read the tracker file and either set the iteration or
     # mark it as a release checkpoint.
@@ -407,7 +790,7 @@ def _load_base_checkpoint(load_dir, rank0=False):
         print_rank_0(e)
         sys.exit()
 
-    return state_dict, release
+    return state_dict, release, checkpoint_name
 
 
 def load_args_from_checkpoint(args, load_arg='load'):

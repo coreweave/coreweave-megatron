@@ -2,9 +2,33 @@
 
 # Runs the "345M" parameter model
 
+source_folder="/mnt/pvc/checkpoints"
+target_folder="/mnt/checkpoints"
+latest_checkpoint_file="${source_folder}/latest_checkpointed_iteration.txt"
+
+if [ -f "$latest_checkpoint_file" ]; then
+    latest_checkpoint=$(cat "$latest_checkpoint_file")
+    formatted_checkpoint=$(printf "%07d" $latest_checkpoint)
+    if [ -d "${source_folder}/iter_${formatted_checkpoint}" ]; then
+        mkdir -p "${target_folder}/iter_${formatted_checkpoint}"
+        cp -r "${source_folder}/iter_${formatted_checkpoint}/." "${target_folder}/iter_${formatted_checkpoint}/"
+        cp "$latest_checkpoint_file" "${target_folder}/latest_checkpointed_iteration.txt"
+        echo "Latest checkpoint copied to $target_folder"
+    else
+        echo "Latest checkpoint folder does not exist."
+    fi
+else
+    echo "Latest checkpoint file not found or source folder does not exist."
+fi
+
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-CHECKPOINT_PATH=/mnt/pvc/checkpoints
+if [ "$1" == "--save-to-pvc" ]; then
+    CHECKPOINT_PATH=/mnt/pvc/checkpoints
+else
+    CHECKPOINT_PATH=/mnt/checkpoints
+fi
+
 VOCAB_FILE=/mnt/pvc/megatron-dev-dataset/gpt2-vocab.json
 MERGE_FILE=/mnt/pvc/megatron-dev-dataset/gpt2-merges.txt
 DATA_PATH=/mnt/pvc/megatron-dev-dataset/gpt2c4_text_document
@@ -18,6 +42,9 @@ DISTRIBUTED_ARGS="
 "
 
 GPT_ARGS="
+    --tensor-model-parallel-size $TP_SIZE \
+    --pipeline-model-parallel-size $PP_SIZE \
+    --sequence-parallel \
     --num-layers $N_LAYERS \
     --hidden-size $D_MODEL \
     --num-attention-heads $N_HEADS \
@@ -45,8 +72,8 @@ DATA_ARGS="
 "
 
 OUTPUT_ARGS="
-    --log-interval 100 \
-    --save-interval 100 \
+    --log-interval 1 \
+    --save-interval 1 \
     --eval-interval 1000 \
     --eval-iters 10
 "
@@ -62,6 +89,8 @@ torchrun $DISTRIBUTED_ARGS pretrain_gpt.py \
     $OUTPUT_ARGS \
     $LOG_ARGS \
     --distributed-backend nccl \
+    --use-tensorizer \
     --save $CHECKPOINT_PATH \
-    --load $CHECKPOINT_PATH
+    --load $CHECKPOINT_PATH \
+    --seed=42
 

@@ -14,7 +14,7 @@ spec:
         - |
           cd /mnt/pvc
           git clone https://huggingface.co/datasets/hakurei/megatron-dev-dataset
-          git clone -b coreweave-main https://github.com/coreweave/coreweave-megatron
+          git clone -b amercurio/tensorizer https://github.com/coreweave/coreweave-megatron
         volumeMounts:
           - name: megatron-dev
             mountPath: /mnt/pvc

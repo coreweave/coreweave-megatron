@@ -854,6 +854,10 @@ def _add_checkpointing_args(parser):
                        help='Output directory to save checkpoints to.')
     group.add_argument('--save-interval', type=int, default=None,
                        help='Number of iterations between checkpoint saves.')
+    group.add_argument('--use-tensorizer', action='store_true',
+                       help='Use Tensorizer for fast model weight serialization '
+                       'and deserialization. Only works for model weights and not '
+                       'optimizer states.')
     group.add_argument('--no-save-optim', action='store_true', default=None,
                        help='Do not save current optimizer.')
     group.add_argument('--no-save-rng', action='store_true', default=None,

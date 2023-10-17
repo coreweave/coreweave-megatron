@@ -8,6 +8,8 @@ spec:
       replicas: 1
       template:
         metadata:
+          labels:
+            name: megatron-pytorchjob
           annotations:
             sidecar.istio.io/inject: "false"
         spec:
@@ -18,22 +20,28 @@ spec:
             command:
             - "/bin/bash"
             - "-c"
-            - "cd /mnt/pvc/coreweave-megatron && rm -rf ../checkpoints && ./pretrain_multi_node.sh"
+            - "cd /mnt/pvc/coreweave-megatron && ./pretrain_multi_node.sh --save-to-pvc" # add --save-to-pvc to save checkpoints to pvc
             tty: true
             env:
+            - name: NCCL_DEBUG
+              value: "INFO"
             - name: GPUS_PER_NODE
               value: "1"
+            - name: TP_SIZE
+              value: "1"
+            - name: PP_SIZE
+              value: "2"
             # Model Config, you can find values here: https://arxiv.org/pdf/2005.14165.pdf
             - name: N_LAYERS
-              value: "12"
+              value: "32"
             - name: D_MODEL
-              value: "768"
+              value: "4096"
             - name: N_HEADS
-              value: "12"
+              value: "32"
             - name: M_BS
               value: "1"
             - name: G_BS
-              value: "16"
+              value: "1"
             securityContext:
               runAsUser: 0
             volumeMounts:
@@ -41,13 +49,15 @@ spec:
                 mountPath: /mnt/pvc
               - name: dshm
                 mountPath: /dev/shm
+              - name: checkpoint-dir
+                mountPath: /mnt/checkpoint
             resources:
               requests:
-                cpu: 32
+                cpu: 16
                 memory: 128Gi
                 nvidia.com/gpu: 1
               limits:
-                cpu: 32
+                cpu: 16
                 memory: 128Gi 
                 nvidia.com/gpu: 1
           volumes:
@@ -57,6 +67,9 @@ spec:
             - emptyDir:
                 medium: Memory
               name: dshm
+            - emptyDir:
+                medium: Memory
+              name: checkpoint-dir
           affinity:
             nodeAffinity:
               requiredDuringSchedulingIgnoredDuringExecution:
@@ -69,12 +82,14 @@ spec:
                   - key: gpu.nvidia.com/class
                     operator: In
                     values:
-                    - A40
+                    - RTX_A6000
           restartPolicy: Never
     Worker:
-      replicas: 3
+      replicas: 1
       template:
         metadata:
+          labels:
+            name: megatron-pytorchjob
           annotations:
             sidecar.istio.io/inject: "false"
         spec:
@@ -85,22 +100,28 @@ spec:
             command:
             - "/bin/bash"
             - "-c"
-            - "cd /mnt/pvc/coreweave-megatron && rm -rf ../checkpoints && ./pretrain_multi_node.sh"
+            - "cd /mnt/pvc/coreweave-megatron && ./pretrain_multi_node.sh --save-to-pvc" # add --save-to-pvc to save checkpoints to pvc
             tty: true
             env:
+            - name: NCCL_DEBUG
+              value: "INFO"
             - name: GPUS_PER_NODE
               value: "1"
+            - name: TP_SIZE
+              value: "1"
+            - name: PP_SIZE
+              value: "2"
             # Model Config, you can find values here: https://arxiv.org/pdf/2005.14165.pdf
             - name: N_LAYERS
-              value: "12"
+              value: "32"
             - name: D_MODEL
-              value: "768"
+              value: "4096"
             - name: N_HEADS
-              value: "12"
+              value: "32"
             - name: M_BS
               value: "1"
             - name: G_BS
-              value: "16"
+              value: "1"
             securityContext:
               runAsUser: 0
             volumeMounts:
@@ -108,13 +129,15 @@ spec:
                 mountPath: /mnt/pvc
               - name: dshm
                 mountPath: /dev/shm
+              - name: checkpoint-dir
+                mountPath: /mnt/checkpoint
             resources:
               requests:
-                cpu: 32
+                cpu: 16
                 memory: 128Gi
                 nvidia.com/gpu: 1
               limits:
-                cpu: 32
+                cpu: 16
                 memory: 128Gi 
                 nvidia.com/gpu: 1
           volumes:
@@ -124,6 +147,9 @@ spec:
             - emptyDir:
                 medium: Memory
               name: dshm
+            - emptyDir:
+                medium: Memory
+              name: checkpoint-dir
           affinity:
             nodeAffinity:
               requiredDuringSchedulingIgnoredDuringExecution:
@@ -136,5 +162,5 @@ spec:
                   - key: gpu.nvidia.com/class
                     operator: In
                     values:
-                    - A40
+                    - RTX_A6000
           restartPolicy: Never
