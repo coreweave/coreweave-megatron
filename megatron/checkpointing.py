@@ -777,7 +777,7 @@ def _load_base_checkpoint(load_dir, rank0=False):
                 tracker_filename))
             print_rank_0('    will not load any checkpoints and will start from '
                          'random')
-        return None, False, None
+        return None, False
 
     # Otherwise, read the tracker file and either set the iteration or
     # mark it as a release checkpoint.
@@ -813,7 +813,7 @@ def _load_base_checkpoint(load_dir, rank0=False):
         print_rank_0(e)
         sys.exit()
 
-    return state_dict, release, checkpoint_name
+    return state_dict, release
 
 
 def load_args_from_checkpoint(args, load_arg='load'):
