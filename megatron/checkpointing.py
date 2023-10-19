@@ -410,14 +410,14 @@ def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
 
         if len(model) == 1:
             serializer = TensorSerializer(f"{checkpoint_name}.tensors")
-            serializer.write_module(model[0])
+            serializer.write_state_dict(model[0].state_dict_for_save_checkpoint())
             serializer.close()
             dump_main_grads(model[0], f"{checkpoint_name}.tensors")
         else:
             for i in range(len(model)):
                 serializer = TensorSerializer(f"{checkpoint_name}_shard{i}.tensors")
                 mpu.set_virtual_pipeline_model_parallel_rank(i)
-                serializer.write_module(model[i])
+                serializer.write_state_dict(model[i].state_dict_for_save_checkpoint())
                 serializer.close()
                 dump_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
 
@@ -499,14 +499,14 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
     # Model.
     if len(model) == 1:
         deserializer = TensorDeserializer(f"{checkpoint_name}.tensors")
-        deserializer.load_into_module(model[0])
+        model[0].load_state_dict(deserializer)
         deserializer.close()
         load_main_grads(model[0], f"{checkpoint_name}.tensors")
     else:
         for i in range(len(model)):
             deserializer = TensorDeserializer(f"{checkpoint_name}_shard{i}.tensors")
             mpu.set_virtual_pipeline_model_parallel_rank(i)
-            deserializer.load_into_module(model[i])
+            model[i].load_state_dict(deserializer)
             deserializer.close()
             load_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
 
