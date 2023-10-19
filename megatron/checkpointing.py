@@ -10,6 +10,7 @@ import json
 
 import torch
 
+from collections import OrderedDict
 from megatron import update_num_microbatches
 from megatron.core import mpu, tensor_parallel
 from .global_vars import get_args
@@ -313,6 +314,34 @@ def convert_parameters_to_tensors(d):
                 convert_parameters_to_tensors(item)
 
 
+def serialize_model_state_dict(state_dict, stem):
+    for k, v in state_dict.items():
+        if isinstance(v, OrderedDict):
+            serializer = TensorSerializer(f"{stem}.{k}")
+            serializer.write_state_dict(v)
+            serializer.close()
+            state_dict[k] = None
+        elif isinstance(v, dict):
+            serialize_model_state_dict(v, stem)
+    return state_dict
+
+
+def deserialize_model_state_dict(serialized_dict, stem):
+    for k, v in serialized_dict.items():
+        if v is None:
+            serialized_dict[k] = TensorDeserializer(f"{stem}.{k}", device="cpu")
+        elif isinstance(v, dict):
+            deserialize_model_state_dict(v, stem)
+    return serialized_dict
+
+def dump_model(state_dict, checkpoint_name):
+    skeleton = serialize_model_state_dict(state_dict, checkpoint_name)
+    json.dump(skeleton, fp=open(f'{checkpoint_name}-model.json', 'w'))
+
+def load_model(checkpoint_name):
+    skeleton = json.load(fp=open(f'{checkpoint_name}-model.json', 'r'))
+    return deserialize_model_state_dict(skeleton, checkpoint_name)
+
 def dump_optimizer(opt, checkpoint_name):
     flattened, skeleton = flatten_dict_to_skeleton(opt.state_dict())
     serializer = TensorSerializer(stream_io.open_stream(f'{checkpoint_name}-opt.tensors', 'wb+', buffer_size=0))
@@ -323,7 +352,7 @@ def dump_optimizer(opt, checkpoint_name):
 
 def load_optimizer(checkpoint_name):
     opt_state_dict = json.load(fp=open(f'{checkpoint_name}-opt.json', 'r'))
-    deserializer = TensorDeserializer(open(f'{checkpoint_name}-opt.tensors', 'rb'))
+    deserializer = TensorDeserializer(open(f'{checkpoint_name}-opt.tensors', 'rb'), device="cpu")
     opt_state_dict = unflatten_to_skeleton(deserializer, opt_state_dict)
     convert_parameters_to_tensors(opt_state_dict)
     deserializer.close()
@@ -409,16 +438,12 @@ def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
         torch.save(torch_state, f"{checkpoint_name}") # TODO: Serialize in JSON.
 
         if len(model) == 1:
-            serializer = TensorSerializer(f"{checkpoint_name}.tensors")
-            serializer.write_state_dict(model[0].state_dict_for_save_checkpoint())
-            serializer.close()
+            dump_model(model[0].state_dict_for_save_checkpoint(), f"{checkpoint_name}.tensors")
             dump_main_grads(model[0], f"{checkpoint_name}.tensors")
         else:
             for i in range(len(model)):
-                serializer = TensorSerializer(f"{checkpoint_name}_shard{i}.tensors")
                 mpu.set_virtual_pipeline_model_parallel_rank(i)
-                serializer.write_state_dict(model[i].state_dict_for_save_checkpoint())
-                serializer.close()
+                dump_model(model[i].state_dict_for_save_checkpoint(), f"{checkpoint_name}_shard{i}.tensors")
                 dump_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
 
     # Wait so everyone is done (necessary)
@@ -498,16 +523,14 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
 
     # Model.
     if len(model) == 1:
-        deserializer = TensorDeserializer(f"{checkpoint_name}.tensors")
-        model[0].load_state_dict(deserializer)
-        deserializer.close()
+        model_state_dict = load_model(f"{checkpoint_name}.tensors")
+        model[0].load_state_dict(model_state_dict)
         load_main_grads(model[0], f"{checkpoint_name}.tensors")
     else:
         for i in range(len(model)):
-            deserializer = TensorDeserializer(f"{checkpoint_name}_shard{i}.tensors")
+            model_state_dict = load_model(f"{checkpoint_name}_shard{i}.tensors")
             mpu.set_virtual_pipeline_model_parallel_rank(i)
-            model[i].load_state_dict(deserializer)
-            deserializer.close()
+            model[i].load_state_dict(model_state_dict)
             load_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
 
     # Fix up query/key/value matrix ordering if needed.
