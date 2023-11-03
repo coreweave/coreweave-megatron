@@ -100,6 +100,10 @@ class MegatronModule(torch.nn.Module):
                 MegatronModule.embedding_warning_printed = True
             return
 
+        # Weights are on the meta device.
+        if args.use_tensorizer:
+            return
+
         # Ensure that first and last stages have the same initial parameter
         # values.
         if mpu.is_rank_in_embedding_group():
