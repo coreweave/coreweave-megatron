@@ -858,6 +858,9 @@ def _add_checkpointing_args(parser):
                        help='Use Tensorizer for fast model weight serialization '
                        'and deserialization. Only works for model weights and not '
                        'optimizer states.')
+    group.add_argument('--timing-file', type=str, default=None,
+                       help='This option is meant to be used in combination with'
+                       '--use-tensorizer to benchmark model saving and loading.')
     group.add_argument('--no-save-optim', action='store_true', default=None,
                        help='Do not save current optimizer.')
     group.add_argument('--no-save-rng', action='store_true', default=None,

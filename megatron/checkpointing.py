@@ -317,7 +317,7 @@ def convert_parameters_to_tensors(d):
 def serialize_model_state_dict(state_dict, stem):
     for k, v in state_dict.items():
         if isinstance(v, OrderedDict):
-            serializer = TensorSerializer(f"{stem}.{k}")
+            serializer = TensorSerializer(stream_io.open_stream(f"{stem}.{k}", 'wb+', buffer_size=0))
             serializer.write_state_dict(v)
             serializer.close()
             state_dict[k] = None
@@ -325,22 +325,6 @@ def serialize_model_state_dict(state_dict, stem):
             serialize_model_state_dict(v, stem)
     return state_dict
 
-
-def deserialize_model_state_dict(serialized_dict, stem):
-    for k, v in serialized_dict.items():
-        if v is None:
-            serialized_dict[k] = TensorDeserializer(f"{stem}.{k}", device="cpu")
-        elif isinstance(v, dict):
-            deserialize_model_state_dict(v, stem)
-    return serialized_dict
-
-def dump_model(state_dict, checkpoint_name):
-    skeleton = serialize_model_state_dict(state_dict, checkpoint_name)
-    json.dump(skeleton, fp=open(f'{checkpoint_name}-model.json', 'w'))
-
-def load_model(checkpoint_name):
-    skeleton = json.load(fp=open(f'{checkpoint_name}-model.json', 'r'))
-    return deserialize_model_state_dict(skeleton, checkpoint_name)
 
 def dump_optimizer(opt, checkpoint_name):
     flattened, skeleton = flatten_dict_to_skeleton(opt.state_dict())
@@ -352,7 +336,7 @@ def dump_optimizer(opt, checkpoint_name):
 
 def load_optimizer(checkpoint_name):
     opt_state_dict = json.load(fp=open(f'{checkpoint_name}-opt.json', 'r'))
-    deserializer = TensorDeserializer(open(f'{checkpoint_name}-opt.tensors', 'rb'), device="cpu")
+    deserializer = TensorDeserializer(open(f'{checkpoint_name}-opt.tensors', 'rb'), device=torch.cuda.current_device())
     opt_state_dict = unflatten_to_skeleton(deserializer, opt_state_dict)
     convert_parameters_to_tensors(opt_state_dict)
     deserializer.close()
@@ -377,14 +361,10 @@ def dump_main_grads(model, checkpoint_name):
 def load_main_grads(model, checkpoint_name):
     deserializer = TensorDeserializer(open(f'{checkpoint_name}-grad.tensors', 'rb'))
     for name, param in model.named_parameters():
-        if name in deserializer:
-            main_grad_value = deserializer[name]
-            if isinstance(main_grad_value, torch.nn.Parameter):
-                main_grad_value = main_grad_value.data
-            param.main_grad = main_grad_value
-            print(f"initialized main_grad for {name} with shape {param.main_grad.shape}")
-        else:
-            print(f"main_grad not found for {name}")
+        main_grad_value = deserializer[name]
+        if isinstance(main_grad_value, torch.nn.Parameter):
+            main_grad_value = main_grad_value.data
+        param.main_grad = main_grad_value
     deserializer.close()
 
 
@@ -438,12 +418,16 @@ def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
         torch.save(torch_state, f"{checkpoint_name}") # TODO: Serialize in JSON.
 
         if len(model) == 1:
-            dump_model(model[0].state_dict_for_save_checkpoint(), f"{checkpoint_name}.tensors")
+            serializer = TensorSerializer(f"{checkpoint_name}.tensors")
+            serializer.write_module(model[0])
+            serializer.close()
             dump_main_grads(model[0], f"{checkpoint_name}.tensors")
         else:
             for i in range(len(model)):
                 mpu.set_virtual_pipeline_model_parallel_rank(i)
-                dump_model(model[i].state_dict_for_save_checkpoint(), f"{checkpoint_name}_shard{i}.tensors")
+                serializer = TensorSerializer(f"{checkpoint_name}_shard{i}.tensors")
+                serializer.write_module(model[i])
+                serializer.close()
                 dump_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
 
     # Wait so everyone is done (necessary)
@@ -472,8 +456,6 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
     """
     args = get_args()
     load_dir = getattr(args, load_arg)
-
-    model = unwrap_model(model)
 
     state_dict, release, checkpoint_name = _load_base_checkpoint_tensorizer(load_dir, rank0=False)
 
@@ -508,69 +490,75 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
                 sys.exit()
 
     # Check arguments.
-    assert args.consumed_train_samples == 0
-    assert args.consumed_valid_samples == 0
-    if 'args' in state_dict and not args.finetune:
-        checkpoint_args = state_dict['args']
-        check_checkpoint_args(checkpoint_args)
-        args.consumed_train_samples = getattr(checkpoint_args,
-                                              'consumed_train_samples', 0)
-        update_num_microbatches(consumed_samples=args.consumed_train_samples)
-        args.consumed_valid_samples = getattr(checkpoint_args,
-                                              'consumed_valid_samples', 0)
-    else:
-        print_rank_0('could not find arguments in the checkpoint ...')
+    if model is not None:
+        assert args.consumed_train_samples == 0
+        assert args.consumed_valid_samples == 0
+        if 'args' in state_dict and not args.finetune:
+            checkpoint_args = state_dict['args']
+            check_checkpoint_args(checkpoint_args)
+            args.consumed_train_samples = getattr(checkpoint_args,
+                                                'consumed_train_samples', 0)
+            update_num_microbatches(consumed_samples=args.consumed_train_samples)
+            args.consumed_valid_samples = getattr(checkpoint_args,
+                                                'consumed_valid_samples', 0)
+        else:
+            print_rank_0('could not find arguments in the checkpoint ...')
 
-    # Model.
-    if len(model) == 1:
-        model_state_dict = load_model(f"{checkpoint_name}.tensors")
-        model[0].load_state_dict(model_state_dict)
-        load_main_grads(model[0], f"{checkpoint_name}.tensors")
-    else:
-        for i in range(len(model)):
-            model_state_dict = load_model(f"{checkpoint_name}_shard{i}.tensors")
-            mpu.set_virtual_pipeline_model_parallel_rank(i)
-            model[i].load_state_dict(model_state_dict)
-            load_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
+        model = unwrap_model(model)
 
-    # Fix up query/key/value matrix ordering if needed.
-    checkpoint_version = get_checkpoint_version()
-    print_rank_0(f' checkpoint version {checkpoint_version}')
-    fix_query_key_value_ordering(model, checkpoint_version)
+        # Model.
+        if len(model) == 1:
+            deserializer = TensorDeserializer(f"{checkpoint_name}.tensors", device=torch.cuda.current_device(), plaid_mode=True)
+            deserializer.load_into_module(model[0])
+            deserializer.close()
+            load_main_grads(model[0], f"{checkpoint_name}.tensors")
+        else:
+            for i in range(len(model)):
+                mpu.set_virtual_pipeline_model_parallel_rank(i)
+                deserializer = TensorDeserializer(f"{checkpoint_name}_shard{i}.tensors", device=torch.cuda.current_device(), plaid_mode=True)
+                deserializer.load_into_module(model[i])
+                deserializer.close()
+                load_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
 
-    # Optimizer.
-    if not release and not args.finetune and not args.no_load_optim:
-        try:
-            # Load state dict.
-            if optimizer is not None:
-                optimizer.load_state_dict(load_optimizer(checkpoint_name))
+        # Fix up query/key/value matrix ordering if needed.
+        checkpoint_version = get_checkpoint_version()
+        print_rank_0(f' checkpoint version {checkpoint_version}')
+        fix_query_key_value_ordering(model, checkpoint_version)
 
-            # Load distributed optimizer's custom parameter state.
-            if args.use_distributed_optimizer:
-                tracker_filename = get_checkpoint_tracker_filename(load_dir)
-                iteration, release = read_metadata(tracker_filename)
-                model_checkpoint_name = \
-                    get_checkpoint_name(load_dir, iteration, release)
-                optim_checkpoint_name = \
-                    get_distributed_optimizer_checkpoint_name(
-                        model_checkpoint_name)
-                optimizer.load_parameter_state(optim_checkpoint_name)
+    if optimizer is not None:
+        # Optimizer.
+        if not release and not args.finetune and not args.no_load_optim:
+            try:
+                # Load state dict.
+                if optimizer is not None:
+                    optimizer.load_state_dict(load_optimizer(checkpoint_name))
 
-            # Load scheduler.
-            if opt_param_scheduler is not None:
-                if 'lr_scheduler' in state_dict: # backward compatbility
-                    opt_param_scheduler.load_state_dict(state_dict['lr_scheduler'])
-                else:
-                    opt_param_scheduler.load_state_dict(state_dict['opt_param_scheduler'])
-        except KeyError:
-            print_rank_0('Unable to load optimizer from checkpoint {}. '
-                         'Specify --no-load-optim or --finetune to prevent '
-                         'attempting to load the optimizer state, '
-                         'exiting ...'.format(checkpoint_name))
-            sys.exit()
-    else:
-        if (args.fp16 or args.bf16) and optimizer is not None:
-            optimizer.reload_model_params()
+                # Load distributed optimizer's custom parameter state.
+                if args.use_distributed_optimizer:
+                    tracker_filename = get_checkpoint_tracker_filename(load_dir)
+                    iteration, release = read_metadata(tracker_filename)
+                    model_checkpoint_name = \
+                        get_checkpoint_name(load_dir, iteration, release)
+                    optim_checkpoint_name = \
+                        get_distributed_optimizer_checkpoint_name(
+                            model_checkpoint_name)
+                    optimizer.load_parameter_state(optim_checkpoint_name)
+
+                # Load scheduler.
+                if opt_param_scheduler is not None:
+                    if 'lr_scheduler' in state_dict: # backward compatbility
+                        opt_param_scheduler.load_state_dict(state_dict['lr_scheduler'])
+                    else:
+                        opt_param_scheduler.load_state_dict(state_dict['opt_param_scheduler'])
+            except KeyError:
+                print_rank_0('Unable to load optimizer from checkpoint {}. '
+                            'Specify --no-load-optim or --finetune to prevent '
+                            'attempting to load the optimizer state, '
+                            'exiting ...'.format(checkpoint_name))
+                sys.exit()
+        else:
+            if (args.fp16 or args.bf16) and optimizer is not None:
+                optimizer.reload_model_params()
 
     # rng states.
     if not release and not args.finetune and not args.no_load_rng:
