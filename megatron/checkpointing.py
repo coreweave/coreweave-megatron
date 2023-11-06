@@ -336,7 +336,7 @@ def dump_optimizer(opt, checkpoint_name):
 
 def load_optimizer(checkpoint_name):
     opt_state_dict = json.load(fp=open(f'{checkpoint_name}-opt.json', 'r'))
-    deserializer = TensorDeserializer(open(f'{checkpoint_name}-opt.tensors', 'rb'), device=torch.cuda.current_device())
+    deserializer = TensorDeserializer(f'{checkpoint_name}-opt.tensors', device=torch.cuda.current_device(), plaid_mode=True)
     opt_state_dict = unflatten_to_skeleton(deserializer, opt_state_dict)
     convert_parameters_to_tensors(opt_state_dict)
     deserializer.close()
@@ -353,13 +353,13 @@ def map_model_main_grad_to_parameters(model):
 
 def dump_main_grads(model, checkpoint_name):
     main_grads = map_model_main_grad_to_parameters(model)
-    serializer = TensorSerializer(stream_io.open_stream(f'{checkpoint_name}-grad.tensors', 'wb+', buffer_size=0))
+    serializer = TensorSerializer(f'{checkpoint_name}-grad.tensors')
     serializer.write_state_dict(main_grads)
     serializer.close()
 
 
 def load_main_grads(model, checkpoint_name):
-    deserializer = TensorDeserializer(open(f'{checkpoint_name}-grad.tensors', 'rb'))
+    deserializer = TensorDeserializer(f'{checkpoint_name}-grad.tensors', plaid_mode=True, device=torch.cuda.current_device())
     for name, param in model.named_parameters():
         main_grad_value = deserializer[name]
         if isinstance(main_grad_value, torch.nn.Parameter):
