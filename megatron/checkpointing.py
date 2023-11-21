@@ -328,7 +328,7 @@ def serialize_model_state_dict(state_dict, stem):
 
 def dump_optimizer(opt, checkpoint_name):
     flattened, skeleton = flatten_dict_to_skeleton(opt.state_dict())
-    serializer = TensorSerializer(stream_io.open_stream(f'{checkpoint_name}-opt.tensors', 'wb+', buffer_size=0))
+    serializer = TensorSerializer(f'{checkpoint_name}-opt.tensors')
     serializer.write_state_dict(flattened)
     serializer.close()
     json.dump(skeleton, fp=open(f'{checkpoint_name}-opt.json', 'w'))
