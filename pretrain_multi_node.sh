@@ -3,7 +3,7 @@
 # Runs the "345M" parameter model
 
 source_folder="/mnt/pvc/checkpoints"
-target_folder="/mnt/checkpoints"
+target_folder="/workspace"
 latest_checkpoint_file="${source_folder}/latest_checkpointed_iteration.txt"
 
 if [ -f "$latest_checkpoint_file" ]; then
@@ -26,7 +26,7 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1
 if [ "$1" == "--save-to-pvc" ]; then
     CHECKPOINT_PATH=/mnt/pvc/checkpoints
 else
-    CHECKPOINT_PATH=/mnt/checkpoints
+    CHECKPOINT_PATH=/workspace
 fi
 
 VOCAB_FILE=/mnt/pvc/megatron-dev-dataset/gpt2-vocab.json
@@ -89,8 +89,9 @@ torchrun $DISTRIBUTED_ARGS pretrain_gpt.py \
     $OUTPUT_ARGS \
     $LOG_ARGS \
     --distributed-backend nccl \
-    --use-tensorizer \
+    --timing-file=/mnt/pvc/logs.json \
     --save $CHECKPOINT_PATH \
     --load $CHECKPOINT_PATH \
+    --use-tensorizer \
     --seed=42
 

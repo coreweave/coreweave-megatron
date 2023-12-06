@@ -14,52 +14,53 @@ spec:
             sidecar.istio.io/inject: "false"
         spec:
           containers:
-          - name: pytorch
-            image: nvcr.io/nvidia/pytorch:23.06-py3
-            imagePullPolicy: IfNotPresent
-            command:
-            - "/bin/bash"
-            - "-c"
-            - "cd /mnt/pvc/coreweave-megatron && ./pretrain_multi_node.sh --save-to-pvc" # add --save-to-pvc to save checkpoints to pvc
-            tty: true
-            env:
-            - name: NCCL_DEBUG
-              value: "INFO"
-            - name: GPUS_PER_NODE
-              value: "1"
-            - name: TP_SIZE
-              value: "1"
-            - name: PP_SIZE
-              value: "2"
-            # Model Config, you can find values here: https://arxiv.org/pdf/2005.14165.pdf
-            - name: N_LAYERS
-              value: "32"
-            - name: D_MODEL
-              value: "4096"
-            - name: N_HEADS
-              value: "32"
-            - name: M_BS
-              value: "1"
-            - name: G_BS
-              value: "1"
-            securityContext:
-              runAsUser: 0
-            volumeMounts:
-              - name: megatron-dev
-                mountPath: /mnt/pvc
-              - name: dshm
-                mountPath: /dev/shm
-              - name: checkpoint-dir
-                mountPath: /mnt/checkpoint
-            resources:
-              requests:
-                cpu: 16
-                memory: 128Gi
-                nvidia.com/gpu: 1
-              limits:
-                cpu: 16
-                memory: 128Gi 
-                nvidia.com/gpu: 1
+            - name: pytorch
+              image: nvcr.io/nvidia/pytorch:23.06-py3
+              imagePullPolicy: IfNotPresent
+              command:
+                - "/bin/bash"
+                - "-c"
+                - >
+                  cd /mnt/pvc/coreweave-megatron && 
+                  pip3 install tensorizer==2.7.0 && 
+                  ./pretrain_multi_node.sh
+              tty: true
+              env:
+                - name: GPUS_PER_NODE
+                  value: "1"
+                - name: TP_SIZE
+                  value: "1"
+                - name: PP_SIZE
+                  value: "2"
+                # Model Config, you can find values here: https://arxiv.org/pdf/2005.14165.pdf
+                - name: N_LAYERS
+                  value: "32"
+                - name: D_MODEL
+                  value: "4096"
+                - name: N_HEADS
+                  value: "32"
+                - name: M_BS
+                  value: "1"
+                - name: G_BS
+                  value: "1"
+              securityContext:
+                runAsUser: 0
+              volumeMounts:
+                - name: megatron-dev
+                  mountPath: /mnt/pvc
+                - name: dshm
+                  mountPath: /dev/shm
+              resources:
+                requests:
+                  cpu: 32
+                  memory: 128Gi
+                  ephemeral-storage: 100Gi
+                  nvidia.com/gpu: 1
+                limits:
+                  cpu: 32
+                  memory: 128Gi
+                  ephemeral-storage: 100Gi
+                  nvidia.com/gpu: 1
           volumes:
             - name: megatron-dev
               persistentVolumeClaim:
@@ -67,22 +68,28 @@ spec:
             - emptyDir:
                 medium: Memory
               name: dshm
-            - emptyDir:
-                medium: Memory
-              name: checkpoint-dir
           affinity:
             nodeAffinity:
               requiredDuringSchedulingIgnoredDuringExecution:
                 nodeSelectorTerms:
-                - matchExpressions:
-                  - key: topology.kubernetes.io/region
-                    operator: In
-                    values: 
-                    - LAS1
-                  - key: gpu.nvidia.com/class
-                    operator: In
-                    values:
-                    - RTX_A6000
+                  - matchExpressions:
+                      - key: topology.kubernetes.io/region
+                        operator: In
+                        values: 
+                          - LAS1
+                      - key: gpu.nvidia.com/class
+                        operator: In
+                        values:
+                          - RTX_A6000
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchExpressions:
+                      - key: job-name
+                        operator: In
+                        values:
+                          - megatron-pytorchjob
+                  topologyKey: kubernetes.io/hostname
           restartPolicy: Never
     Worker:
       replicas: 1
@@ -94,52 +101,53 @@ spec:
             sidecar.istio.io/inject: "false"
         spec:
           containers:
-          - name: pytorch
-            image: nvcr.io/nvidia/pytorch:23.06-py3
-            imagePullPolicy: IfNotPresent
-            command:
-            - "/bin/bash"
-            - "-c"
-            - "cd /mnt/pvc/coreweave-megatron && ./pretrain_multi_node.sh --save-to-pvc" # add --save-to-pvc to save checkpoints to pvc
-            tty: true
-            env:
-            - name: NCCL_DEBUG
-              value: "INFO"
-            - name: GPUS_PER_NODE
-              value: "1"
-            - name: TP_SIZE
-              value: "1"
-            - name: PP_SIZE
-              value: "2"
-            # Model Config, you can find values here: https://arxiv.org/pdf/2005.14165.pdf
-            - name: N_LAYERS
-              value: "32"
-            - name: D_MODEL
-              value: "4096"
-            - name: N_HEADS
-              value: "32"
-            - name: M_BS
-              value: "1"
-            - name: G_BS
-              value: "1"
-            securityContext:
-              runAsUser: 0
-            volumeMounts:
-              - name: megatron-dev
-                mountPath: /mnt/pvc
-              - name: dshm
-                mountPath: /dev/shm
-              - name: checkpoint-dir
-                mountPath: /mnt/checkpoint
-            resources:
-              requests:
-                cpu: 16
-                memory: 128Gi
-                nvidia.com/gpu: 1
-              limits:
-                cpu: 16
-                memory: 128Gi 
-                nvidia.com/gpu: 1
+            - name: pytorch
+              image: nvcr.io/nvidia/pytorch:23.06-py3
+              imagePullPolicy: IfNotPresent
+              command:
+                - "/bin/bash"
+                - "-c"
+                - >
+                  cd /mnt/pvc/coreweave-megatron && 
+                  pip3 install tensorizer==2.7.0 && 
+                  ./pretrain_multi_node.sh
+              tty: true
+              env:
+                - name: GPUS_PER_NODE
+                  value: "1"
+                - name: TP_SIZE
+                  value: "1"
+                - name: PP_SIZE
+                  value: "2"
+                # Model Config, you can find values here: https://arxiv.org/pdf/2005.14165.pdf
+                - name: N_LAYERS
+                  value: "32"
+                - name: D_MODEL
+                  value: "4096"
+                - name: N_HEADS
+                  value: "32"
+                - name: M_BS
+                  value: "1"
+                - name: G_BS
+                  value: "1"
+              securityContext:
+                runAsUser: 0
+              volumeMounts:
+                - name: megatron-dev
+                  mountPath: /mnt/pvc
+                - name: dshm
+                  mountPath: /dev/shm
+              resources:
+                requests:
+                  cpu: 32
+                  memory: 128Gi
+                  ephemeral-storage: 100Gi
+                  nvidia.com/gpu: 1
+                limits:
+                  cpu: 32
+                  memory: 128Gi
+                  ephemeral-storage: 100Gi
+                  nvidia.com/gpu: 1
           volumes:
             - name: megatron-dev
               persistentVolumeClaim:
@@ -147,20 +155,26 @@ spec:
             - emptyDir:
                 medium: Memory
               name: dshm
-            - emptyDir:
-                medium: Memory
-              name: checkpoint-dir
           affinity:
             nodeAffinity:
               requiredDuringSchedulingIgnoredDuringExecution:
                 nodeSelectorTerms:
-                - matchExpressions:
-                  - key: topology.kubernetes.io/region
-                    operator: In
-                    values: 
-                    - LAS1
-                  - key: gpu.nvidia.com/class
-                    operator: In
-                    values:
-                    - RTX_A6000
+                  - matchExpressions:
+                      - key: topology.kubernetes.io/region
+                        operator: In
+                        values: 
+                          - LAS1
+                      - key: gpu.nvidia.com/class
+                        operator: In
+                        values:
+                          - RTX_A6000
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchExpressions:
+                      - key: job-name
+                        operator: In
+                        values:
+                          - megatron-pytorchjob
+                  topologyKey: kubernetes.io/hostname
           restartPolicy: Never
