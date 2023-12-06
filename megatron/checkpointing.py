@@ -444,10 +444,6 @@ def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
         with open(tracker_filename, 'w') as f:
             f.write(str(iteration))
 
-    # Wait so everyone is done (not necessary)
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
-
 def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='load', strict=True):
     """Load a model checkpoint and return the iteration.
     strict (bool): whether to strictly enforce that the keys in
@@ -596,10 +592,6 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
                          'exiting ...'.format(checkpoint_name))
             sys.exit()
 
-    # Some utilities want to load a checkpoint without distributed being initialized
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
-
     print_rank_0(f'  successfully loaded checkpoint from {args.load} '
                  f'at iteration {iteration}')
 
@@ -661,12 +653,12 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler):
         ensure_directory_exists(checkpoint_name)
         torch.save(state_dict, checkpoint_name)
 
+    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}' \
+                 .format(iteration, args.save))
+
     # Wait so everyone is done (necessary)
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
-
-    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}' \
-                 .format(iteration, args.save))
 
     # And update the latest iteration
     if not torch.distributed.is_initialized() \
@@ -674,11 +666,6 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler):
         tracker_filename = get_checkpoint_tracker_filename(args.save)
         with open(tracker_filename, 'w') as f:
             f.write(str(iteration))
-
-    # Wait so everyone is done (not necessary)
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
-
 
 def _transpose_first_dim(t, num_splits, num_splits_first, model):
     input_shape = t.size()
@@ -1023,10 +1010,6 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
                          'attempting to load the rng state, '
                          'exiting ...'.format(checkpoint_name))
             sys.exit()
-
-    # Some utilities want to load a checkpoint without distributed being initialized
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
 
     print_rank_0(f'  successfully loaded checkpoint from {args.load} '
                  f'at iteration {iteration}')

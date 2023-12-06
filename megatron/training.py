@@ -408,11 +408,10 @@ def setup_model_and_optimizer(model_provider_func,
         if state_dict is None:
             args.load = None
             set_args(args)
-
+    
     model = get_model(model_provider_func, model_type)
     unwrapped_model = unwrap_model(model,
                                    (torchDDP, LocalDDP, Float16Module))
-
     if args.load is not None:
         timers = get_timers()
         timers('load-checkpoint', log_level=0).start(barrier=True)
