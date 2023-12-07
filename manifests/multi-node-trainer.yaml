@@ -22,7 +22,7 @@ spec:
                 - "-c"
                 - >
                   cd /mnt/pvc/coreweave-megatron && 
-                  pip3 install tensorizer==2.7.0 && 
+                  pip3 install tensorizer==2.7.1 && 
                   ./pretrain_multi_node.sh
               tty: true
               env:
@@ -109,7 +109,7 @@ spec:
                 - "-c"
                 - >
                   cd /mnt/pvc/coreweave-megatron && 
-                  pip3 install tensorizer==2.7.0 && 
+                  pip3 install tensorizer==2.7.1 && 
                   ./pretrain_multi_node.sh
               tty: true
               env:
