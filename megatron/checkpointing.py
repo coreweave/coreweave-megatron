@@ -323,8 +323,13 @@ def dump_optimizer(opt, checkpoint_name):
 
 
 def load_optimizer(checkpoint_name):
-    opt_state_dict = json.load(fp=open(f'{checkpoint_name}-opt.json', 'r'))
-    deserializer = TensorDeserializer(f'{checkpoint_name}-opt.tensors', device=torch.cuda.current_device(), plaid_mode=True)
+    opt_state_dict = json.load(
+        fp=open(f'{checkpoint_name}-opt.json', 'r')
+    )
+    deserializer = TensorDeserializer(
+        f'{checkpoint_name}-opt.tensors',
+        device=torch.cuda.current_device(), plaid_mode=True
+    )
     opt_state_dict = unflatten_to_skeleton(deserializer, opt_state_dict)
     convert_parameters_to_tensors(opt_state_dict)
     deserializer.close()
@@ -347,7 +352,11 @@ def dump_main_grads(model, checkpoint_name):
 
 
 def load_main_grads(model, checkpoint_name):
-    deserializer = TensorDeserializer(f'{checkpoint_name}-grad.tensors', plaid_mode=True, device=torch.cuda.current_device())
+    deserializer = TensorDeserializer(
+        f'{checkpoint_name}-grad.tensors',
+        plaid_mode=True,
+        device=torch.cuda.current_device()
+    )
     for name, param in model.named_parameters():
         main_grad_value = deserializer[name]
         if isinstance(main_grad_value, torch.nn.Parameter):
@@ -403,7 +412,8 @@ def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
         if not args.no_save_rng:
             torch_state["rng_state"] = rng_state
 
-        torch.save(torch_state, f"{checkpoint_name}") # TODO: Serialize in JSON.
+        # TODO: Serialize in JSON.
+        torch.save(torch_state, f"{checkpoint_name}")
 
         if len(model) == 1:
             serializer = TensorSerializer(f"{checkpoint_name}.tensors")
@@ -413,10 +423,15 @@ def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
         else:
             for i in range(len(model)):
                 mpu.set_virtual_pipeline_model_parallel_rank(i)
-                serializer = TensorSerializer(f"{checkpoint_name}_shard{i}.tensors")
+                serializer = TensorSerializer(
+                    f"{checkpoint_name}_shard{i}.tensors"
+                )
                 serializer.write_module(model[i])
                 serializer.close()
-                dump_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
+                dump_main_grads(
+                    model[i],
+                    f"{checkpoint_name}_shard{i}.tensors"
+                )
 
     # Wait so everyone is done (necessary)
     if torch.distributed.is_initialized():
@@ -492,17 +507,28 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
 
         # Model.
         if len(model) == 1:
-            deserializer = TensorDeserializer(f"{checkpoint_name}.tensors", device=torch.cuda.current_device(), plaid_mode=True)
+            deserializer = TensorDeserializer(
+                f"{checkpoint_name}.tensors",
+                device=torch.cuda.current_device(),
+                plaid_mode=True
+            )
             deserializer.load_into_module(model[0])
             deserializer.close()
             load_main_grads(model[0], f"{checkpoint_name}.tensors")
         else:
             for i in range(len(model)):
                 mpu.set_virtual_pipeline_model_parallel_rank(i)
-                deserializer = TensorDeserializer(f"{checkpoint_name}_shard{i}.tensors", device=torch.cuda.current_device(), plaid_mode=True)
+                deserializer = TensorDeserializer(
+                    f"{checkpoint_name}_shard{i}.tensors",
+                    device=torch.cuda.current_device(),
+                    plaid_mode=True
+                )
                 deserializer.load_into_module(model[i])
                 deserializer.close()
-                load_main_grads(model[i], f"{checkpoint_name}_shard{i}.tensors")
+                load_main_grads(
+                    model[i],
+                    f"{checkpoint_name}_shard{i}.tensors"
+                )
 
         # Fix up query/key/value matrix ordering if needed.
         checkpoint_version = get_checkpoint_version()
