@@ -78,7 +78,7 @@ def check_checkpoint_args(checkpoint_args):
 def ensure_directory_exists(filename):
     """Build filename's path if it does not already exists."""
     dirname = os.path.dirname(filename)
-    os.makedirs(dirname, exist_ok = True)
+    os.makedirs(dirname, exist_ok=True)
 
 
 def get_checkpoint_name(checkpoints_path, iteration, release=False,
@@ -103,10 +103,10 @@ def get_checkpoint_name(checkpoints_path, iteration, release=False,
     # data parallel rank.
     if not pipeline_parallel:
         common_path = os.path.join(checkpoints_path, directory,
-                            f'mp_rank_{tensor_rank:02d}')
+                                   f'mp_rank_{tensor_rank:02d}')
     else:
         common_path = os.path.join(checkpoints_path, directory,
-                        f'mp_rank_{tensor_rank:02d}_{pipeline_rank:03d}')
+                                   f'mp_rank_{tensor_rank:02d}_{pipeline_rank:03d}')
 
     return os.path.join(common_path, "model_optim_rng.pt")
 
@@ -143,7 +143,6 @@ def find_checkpoint_rank_0(checkpoints_path, iteration, release=False):
 
 
 def get_checkpoint_tracker_filename(checkpoints_path):
-
     """Tracker file rescords the latest chckpoint during
     training to restart from."""
     return os.path.join(checkpoints_path, 'latest_checkpointed_iteration.txt')
@@ -215,6 +214,18 @@ def get_rng_state():
     return rng_state_list
 
 
+def set_rng_state(rng_state):
+    random.setstate(rng_state['random_rng_state'])
+    np.random.set_state(rng_state['np_rng_state'])
+    torch.set_rng_state(rng_state['torch_rng_state'])
+    torch.cuda.set_rng_state(rng_state['cuda_rng_state'])
+    # Check for empty states array
+    if not rng_state['rng_tracker_states']:
+        raise KeyError
+    tensor_parallel.get_cuda_rng_tracker().set_states(
+        rng_state['rng_tracker_states'])
+
+
 def _load_base_checkpoint_tensorizer(load_dir, rank0=False):
     """ Load a tensorized checkpoint.
 
@@ -283,7 +294,6 @@ def flatten_dict_to_skeleton(d, parent_key=''):
     return flat, skel
 
 
-
 def unflatten_to_skeleton(flat, skel):
     for k, v in flat.items():
         keys, d = k.split("."), skel
@@ -334,7 +344,7 @@ def load_optimizer(checkpoint_name):
     convert_parameters_to_tensors(opt_state_dict)
     deserializer.close()
     return opt_state_dict
-    
+
 
 def map_model_main_grad_to_parameters(model):
     main_grads = {}
@@ -437,7 +447,7 @@ def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
 
-    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}' \
+    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}'
                  .format(iteration, args.save))
 
     # And update the latest iteration
@@ -446,6 +456,7 @@ def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
         tracker_filename = get_checkpoint_tracker_filename(args.save)
         with open(tracker_filename, 'w') as f:
             f.write(str(iteration))
+
 
 def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='load', strict=True):
     """Load a model checkpoint and return the iteration.
@@ -496,10 +507,10 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
             checkpoint_args = state_dict['args']
             check_checkpoint_args(checkpoint_args)
             args.consumed_train_samples = getattr(checkpoint_args,
-                                                'consumed_train_samples', 0)
+                                                  'consumed_train_samples', 0)
             update_num_microbatches(consumed_samples=args.consumed_train_samples)
             args.consumed_valid_samples = getattr(checkpoint_args,
-                                                'consumed_valid_samples', 0)
+                                                  'consumed_valid_samples', 0)
         else:
             print_rank_0('could not find arguments in the checkpoint ...')
 
@@ -556,15 +567,15 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
 
                 # Load scheduler.
                 if opt_param_scheduler is not None:
-                    if 'lr_scheduler' in state_dict: # backward compatbility
+                    if 'lr_scheduler' in state_dict:  # backward compatbility
                         opt_param_scheduler.load_state_dict(state_dict['lr_scheduler'])
                     else:
                         opt_param_scheduler.load_state_dict(state_dict['opt_param_scheduler'])
             except KeyError:
                 print_rank_0('Unable to load optimizer from checkpoint {}. '
-                            'Specify --no-load-optim or --finetune to prevent '
-                            'attempting to load the optimizer state, '
-                            'exiting ...'.format(checkpoint_name))
+                             'Specify --no-load-optim or --finetune to prevent '
+                             'attempting to load the optimizer state, '
+                             'exiting ...'.format(checkpoint_name))
                 sys.exit()
         else:
             if (args.fp16 or args.bf16) and optimizer is not None:
@@ -580,25 +591,9 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
                     rng_state = state_dict['rng_state'][mpu.get_data_parallel_rank()]
                 else:
                     rng_state = state_dict['rng_state'][0]
-                random.setstate(rng_state['random_rng_state'])
-                np.random.set_state(rng_state['np_rng_state'])
-                torch.set_rng_state(rng_state['torch_rng_state'])
-                torch.cuda.set_rng_state(rng_state['cuda_rng_state'])
-                # Check for empty states array
-                if not rng_state['rng_tracker_states']:
-                    raise KeyError
-                tensor_parallel.get_cuda_rng_tracker().set_states(
-                    rng_state['rng_tracker_states'])
+                set_rng_state(rng_state=rng_state)
             else:  # backward compatability
-                random.setstate(state_dict['random_rng_state'])
-                np.random.set_state(state_dict['np_rng_state'])
-                torch.set_rng_state(state_dict['torch_rng_state'])
-                torch.cuda.set_rng_state(state_dict['cuda_rng_state'])
-                # Check for empty states array
-                if not state_dict['rng_tracker_states']:
-                    raise KeyError
-                tensor_parallel.get_cuda_rng_tracker().set_states(
-                    state_dict['rng_tracker_states'])
+                set_rng_state(rng_state=state_dict)
         except KeyError:
             print_rank_0('Unable to load rng state from checkpoint {}. '
                          'Specify --no-load-rng or --finetune to prevent '
@@ -610,6 +605,7 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
                  f'at iteration {iteration}')
 
     return iteration
+
 
 def save_checkpoint(iteration, model, optimizer, opt_param_scheduler):
     """Save a model checkpoint."""
@@ -667,7 +663,7 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler):
         ensure_directory_exists(checkpoint_name)
         torch.save(state_dict, checkpoint_name)
 
-    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}' \
+    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}'
                  .format(iteration, args.save))
 
     # Wait so everyone is done (necessary)
@@ -680,6 +676,7 @@ def save_checkpoint(iteration, model, optimizer, opt_param_scheduler):
         tracker_filename = get_checkpoint_tracker_filename(args.save)
         with open(tracker_filename, 'w') as f:
             f.write(str(iteration))
+
 
 def _transpose_first_dim(t, num_splits, num_splits_first, model):
     input_shape = t.size()
@@ -711,7 +708,7 @@ def _transpose_first_dim(t, num_splits, num_splits_first, model):
         intermediate_shape = \
             (num_attention_heads_per_partition,
              hidden_size_per_attention_head, num_splits) +\
-             input_shape[1:]
+            input_shape[1:]
 
         t = t.view(*intermediate_shape)
         t = t.transpose(1, 2).contiguous()
@@ -719,13 +716,14 @@ def _transpose_first_dim(t, num_splits, num_splits_first, model):
 
     return t
 
+
 def fix_query_key_value_ordering(model, checkpoint_version):
     """Fix up query/key/value matrix ordering if checkpoint
     version is smaller than 2.0
     """
     if checkpoint_version < 2.0:
         if isinstance(model, list):
-            assert len(model)==1
+            assert len(model) == 1
             model = model[0]
         for name, param in model.named_parameters():
             if name.endswith(('.query_key_value.weight', '.query_key_value.bias')):
@@ -747,7 +745,7 @@ def fix_query_key_value_ordering(model, checkpoint_version):
                     sys.exit()
                 param.data.copy_(fixed_param)
         print_rank_0(" succesfully fixed query-key-values ordering for"
-                    " checkpoint version {}".format(checkpoint_version))
+                     " checkpoint version {}".format(checkpoint_version))
 
 
 def _load_base_checkpoint(load_dir, rank0=False):
@@ -841,7 +839,12 @@ def load_args_from_checkpoint(args, load_arg='load'):
 
     # One-off conversion for foundation models
     if hasattr(checkpoint_args, 'disable_bias_linear'):
-        setattr(checkpoint_args, 'add_bias_linear', not getattr(checkpoint_args, 'disable_bias_linear'))
+        setattr(
+            checkpoint_args,
+            'add_bias_linear',
+            not getattr(
+                checkpoint_args,
+                'disable_bias_linear'))
 
     def _set_arg(arg_name, old_arg_name=None, force=False):
         if not force and getattr(args, arg_name, None) is not None:
@@ -975,7 +978,7 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
 
             # Load scheduler.
             if opt_param_scheduler is not None:
-                if 'lr_scheduler' in state_dict: # backward compatbility
+                if 'lr_scheduler' in state_dict:  # backward compatbility
                     opt_param_scheduler.load_state_dict(state_dict['lr_scheduler'])
                 else:
                     opt_param_scheduler.load_state_dict(state_dict['opt_param_scheduler'])
@@ -999,25 +1002,9 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
                     rng_state = state_dict['rng_state'][mpu.get_data_parallel_rank()]
                 else:
                     rng_state = state_dict['rng_state'][0]
-                random.setstate(rng_state['random_rng_state'])
-                np.random.set_state(rng_state['np_rng_state'])
-                torch.set_rng_state(rng_state['torch_rng_state'])
-                torch.cuda.set_rng_state(rng_state['cuda_rng_state'])
-                # Check for empty states array
-                if not rng_state['rng_tracker_states']:
-                    raise KeyError
-                tensor_parallel.get_cuda_rng_tracker().set_states(
-                    rng_state['rng_tracker_states'])
+                set_rng_state(rng_state=rng_state)
             else:  # backward compatability
-                random.setstate(state_dict['random_rng_state'])
-                np.random.set_state(state_dict['np_rng_state'])
-                torch.set_rng_state(state_dict['torch_rng_state'])
-                torch.cuda.set_rng_state(state_dict['cuda_rng_state'])
-                # Check for empty states array
-                if not state_dict['rng_tracker_states']:
-                    raise KeyError
-                tensor_parallel.get_cuda_rng_tracker().set_states(
-                    state_dict['rng_tracker_states'])
+                set_rng_state(rng_state=state_dict)
         except KeyError:
             print_rank_0('Unable to load rng state from checkpoint {}. '
                          'Specify --no-load-rng or --finetune to prevent '
@@ -1032,7 +1019,7 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
 
 
 def load_biencoder_checkpoint(model, only_query_model=False,
-        only_context_model=False, custom_load_path=None):
+                              only_context_model=False, custom_load_path=None):
     """
     selectively load retrieval models for indexing/retrieving
     from saved checkpoints
