@@ -314,18 +314,6 @@ def convert_parameters_to_tensors(d):
                 convert_parameters_to_tensors(item)
 
 
-def serialize_model_state_dict(state_dict, stem):
-    for k, v in state_dict.items():
-        if isinstance(v, OrderedDict):
-            serializer = TensorSerializer(stream_io.open_stream(f"{stem}.{k}", 'wb+', buffer_size=0))
-            serializer.write_state_dict(v)
-            serializer.close()
-            state_dict[k] = None
-        elif isinstance(v, dict):
-            serialize_model_state_dict(v, stem)
-    return state_dict
-
-
 def dump_optimizer(opt, checkpoint_name):
     flattened, skeleton = flatten_dict_to_skeleton(opt.state_dict())
     serializer = TensorSerializer(f'{checkpoint_name}-opt.tensors')
