@@ -51,6 +51,18 @@ def print_datetime(string):
     time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print_rank_0('[' + string + '] datetime: {} '.format(time_str))
 
+def save_tensorizer_timing(args, timers, key):
+    if args.timing_file is not None:
+        with open(args.timing_file, 'a') as f:
+            world_size = torch.distributed.get_world_size()
+            rank = torch.distributed.get_rank()
+            json.dump({
+                'tensorizer': args.use_tensorizer,
+                f'{key}': timers._timers[key].elapsed(reset=False),
+                'world_size': world_size,
+                'rank': rank
+            }, fp=f)
+            f.write('\n')
 
 def pretrain(train_valid_test_dataset_provider,
              model_provider,
@@ -415,30 +427,29 @@ def setup_model_and_optimizer(model_provider_func,
     if args.load is not None:
         timers = get_timers()
         timers('load-checkpoint', log_level=0).start(barrier=True)
+        
         if not args.use_tensorizer:
             optimizer = get_megatron_optimizer(model, no_wd_decay_cond,
                                             scale_lr_cond, lr_mult)
             opt_param_scheduler = get_optimizer_param_scheduler(optimizer)
             args.iteration = load_checkpoint(model, optimizer, opt_param_scheduler)
         else:
+            # First, we load our model weights.
             args.iteration = load_checkpoint_tensorizer(model, None, None)
+            
+            # Second, we restore our optimizer.
             optimizer = get_megatron_optimizer(model, no_wd_decay_cond,
                                             scale_lr_cond, lr_mult)
             opt_param_scheduler = get_optimizer_param_scheduler(optimizer)
-            load_checkpoint_tensorizer(None, optimizer, opt_param_scheduler)
+            load_checkpoint_tensorizer(
+                None,
+                optimizer,
+                opt_param_scheduler
+            )
+        
         timers('load-checkpoint').stop(barrier=True)
-        if args.timing_file is not None:
-            with open(args.timing_file, 'a') as f:
-                world_size = torch.distributed.get_world_size()
-                rank = torch.distributed.get_rank()
-                json.dump({
-                    'tensorizer': args.use_tensorizer,
-                    'load_checkpoint': timers._timers['load-checkpoint'].elapsed(reset=False),
-                    'world_size': world_size,
-                    'rank': rank
-                }, fp=f)
-                f.write('\n')
-            timers.log(['load-checkpoint'])
+        save_tensorizer_timing(args, timers, 'load-checkpoint')
+        timers.log(['load-checkpoint'])
     else:
         optimizer = get_megatron_optimizer(model, no_wd_decay_cond,
                                         scale_lr_cond, lr_mult)
@@ -728,22 +739,22 @@ def save_checkpoint_and_time(iteration, model, optimizer, opt_param_scheduler):
     # all ranks report the max time.
     timers('save-checkpoint', log_level=0).start(barrier=True)
     if not args.use_tensorizer:
-        save_checkpoint(iteration, model, optimizer, opt_param_scheduler)
+        save_checkpoint(
+            iteration,
+            model,
+            optimizer,
+            opt_param_scheduler
+        )
     else:
-        save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
+        save_checkpoint_tensorizer(
+            iteration,
+            model,
+            optimizer,
+            opt_param_scheduler
+        )
     timers('save-checkpoint').stop(barrier=True)
-    if args.timing_file is not None:
-        with open(args.timing_file, 'a') as f:
-            world_size = torch.distributed.get_world_size()
-            rank = torch.distributed.get_rank()
-            json.dump({
-                'tensorizer': args.use_tensorizer,
-                'save_checkpoint': timers._timers['save-checkpoint'].elapsed(reset=False),
-                'world_size': world_size,
-                'rank': rank
-            }, fp=f)
-            f.write('\n')
-        timers.log(['save-checkpoint'])
+    save_tensorizer_timing(args, timers, 'save-checkpoint')
+    timers.log(['save-checkpoint'])
 
 
 def train(forward_step_func, model, optimizer, opt_param_scheduler,
