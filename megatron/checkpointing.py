@@ -10,9 +10,11 @@ import json
 
 import torch
 
+from typing import Union, Dict, List, Tuple, Any, Optional
 from collections import OrderedDict
 from megatron import update_num_microbatches
 from megatron.core import mpu, tensor_parallel
+from megatron.optimizer_param_scheduler import OptimizerParamScheduler
 from .global_vars import get_args
 from .utils import (unwrap_model,
                     print_rank_0)
@@ -226,7 +228,8 @@ def set_rng_state(rng_state):
         rng_state['rng_tracker_states'])
 
 
-def _load_base_checkpoint_tensorizer(load_dir, rank0=False):
+def _load_base_checkpoint_tensorizer(
+        load_dir: str, rank0: bool = False) -> Tuple[Optional[Dict[str, torch.Tensor]], bool, Optional[str]]:
     """ Load a tensorized checkpoint.
 
     If rank0 is true, just loads rank 0 tensorizer checkpoint, ignoring arguments.
@@ -269,7 +272,8 @@ def _load_base_checkpoint_tensorizer(load_dir, rank0=False):
     return state_dict, release, checkpoint_name
 
 
-def flatten_dict_to_skeleton(d, parent_key=''):
+def flatten_dict_to_skeleton(
+        d: Union[Dict, List], parent_key: str = "") -> Tuple[Dict[str, torch.Tensor], Union[Dict, List]]:
     flat, skel = {}, {}
     if isinstance(d, dict):
         for k, v in d.items():
@@ -294,7 +298,8 @@ def flatten_dict_to_skeleton(d, parent_key=''):
     return flat, skel
 
 
-def unflatten_to_skeleton(flat, skel):
+def unflatten_to_skeleton(flat: Dict[str, torch.Tensor],
+                          skel: Union[Dict, List]) -> Union[Dict, List]:
     for k, v in flat.items():
         keys, d = k.split("."), skel
         for key in keys[:-1]:
@@ -309,22 +314,28 @@ def unflatten_to_skeleton(flat, skel):
     return skel
 
 
-def convert_parameters_to_tensors(d):
+def convert_parameters_to_tensors(d: Union[Dict, List]) -> Union[Dict, List]:
     if isinstance(d, dict):
+        new_dict = {}
         for k, v in d.items():
             if isinstance(v, torch.nn.Parameter):
-                d[k] = v.data
+                new_dict[k] = v.data
             else:
-                convert_parameters_to_tensors(v)
+                new_dict[k] = convert_parameters_to_tensors(v)
+        return new_dict
     elif isinstance(d, list):
-        for idx, item in enumerate(d):
+        new_list = []
+        for item in d:
             if isinstance(item, torch.nn.Parameter):
-                d[idx] = item.data
+                new_list.append(item.data)
             else:
-                convert_parameters_to_tensors(item)
+                new_list.append(convert_parameters_to_tensors(item))
+        return new_list
+    else:
+        return d
 
 
-def dump_optimizer(opt, checkpoint_name):
+def dump_optimizer(opt: torch.optim.Optimizer, checkpoint_name: str) -> None:
     flattened, skeleton = flatten_dict_to_skeleton(opt.state_dict())
     serializer = TensorSerializer(f'{checkpoint_name}-opt.tensors')
     serializer.write_state_dict(flattened)
@@ -332,7 +343,7 @@ def dump_optimizer(opt, checkpoint_name):
     json.dump(skeleton, fp=open(f'{checkpoint_name}-opt.json', 'w'))
 
 
-def load_optimizer(checkpoint_name):
+def load_optimizer(checkpoint_name: str) -> Dict[str, Any]:
     opt_state_dict = json.load(
         fp=open(f'{checkpoint_name}-opt.json', 'r')
     )
@@ -341,12 +352,12 @@ def load_optimizer(checkpoint_name):
         device=torch.cuda.current_device(), plaid_mode=True
     )
     opt_state_dict = unflatten_to_skeleton(deserializer, opt_state_dict)
-    convert_parameters_to_tensors(opt_state_dict)
+    opt_state_dict = convert_parameters_to_tensors(opt_state_dict)
     deserializer.close()
     return opt_state_dict
 
 
-def map_model_main_grad_to_parameters(model):
+def map_model_main_grad_to_parameters(model: torch.nn.Module) -> Dict[str, torch.Tensor]:
     main_grads = {}
     for name, param in model.named_parameters():
         if hasattr(param, 'main_grad'):
@@ -354,14 +365,14 @@ def map_model_main_grad_to_parameters(model):
     return main_grads
 
 
-def dump_main_grads(model, checkpoint_name):
+def dump_main_grads(model: torch.nn.Module, checkpoint_name: str) -> None:
     main_grads = map_model_main_grad_to_parameters(model)
     serializer = TensorSerializer(f'{checkpoint_name}-grad.tensors')
     serializer.write_state_dict(main_grads)
     serializer.close()
 
 
-def load_main_grads(model, checkpoint_name):
+def load_main_grads(model: torch.nn.Module, checkpoint_name: str) -> None:
     deserializer = TensorDeserializer(
         f'{checkpoint_name}-grad.tensors',
         plaid_mode=True,
@@ -375,7 +386,8 @@ def load_main_grads(model, checkpoint_name):
     deserializer.close()
 
 
-def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler):
+def save_checkpoint_tensorizer(iteration: int, model: torch.nn.Module,
+                               optimizer: torch.optim.Optimizer, opt_param_scheduler: OptimizerParamScheduler) -> None:
     """Save a model checkpoint."""
     args = get_args()
 
@@ -458,7 +470,8 @@ def save_checkpoint_tensorizer(iteration, model, optimizer, opt_param_scheduler)
             f.write(str(iteration))
 
 
-def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='load', strict=True):
+def load_checkpoint_tensorizer(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
+                               opt_param_scheduler: OptimizerParamScheduler, load_arg: str = 'load', strict: bool = True) -> int:
     """Load a model checkpoint and return the iteration.
     strict (bool): whether to strictly enforce that the keys in
         :attr:`state_dict` of the checkpoint match the names of
@@ -607,7 +620,8 @@ def load_checkpoint_tensorizer(model, optimizer, opt_param_scheduler, load_arg='
     return iteration
 
 
-def save_checkpoint(iteration, model, optimizer, opt_param_scheduler):
+def save_checkpoint(iteration: int, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
+                    opt_param_scheduler: OptimizerParamScheduler) -> None:
     """Save a model checkpoint."""
     args = get_args()
 
@@ -888,7 +902,8 @@ def load_args_from_checkpoint(args, load_arg='load'):
     return args, checkpoint_args
 
 
-def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', strict=True):
+def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
+                    opt_param_scheduler: OptimizerParamScheduler, load_arg: str = 'load', strict: bool = True) -> int:
     """Load a model checkpoint and return the iteration.
     strict (bool): whether to strictly enforce that the keys in
         :attr:`state_dict` of the checkpoint match the names of
