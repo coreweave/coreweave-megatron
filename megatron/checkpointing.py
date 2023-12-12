@@ -11,10 +11,8 @@ import json
 import torch
 
 from typing import Union, Dict, List, Tuple, Any, Optional
-from collections import OrderedDict
 from megatron import update_num_microbatches
 from megatron.core import mpu, tensor_parallel
-from megatron.optimizer_param_scheduler import OptimizerParamScheduler
 from .global_vars import get_args
 from .utils import (unwrap_model,
                     print_rank_0)
@@ -387,7 +385,7 @@ def load_main_grads(model: torch.nn.Module, checkpoint_name: str) -> None:
 
 
 def save_checkpoint_tensorizer(iteration: int, model: torch.nn.Module,
-                               optimizer: torch.optim.Optimizer, opt_param_scheduler: OptimizerParamScheduler) -> None:
+                               optimizer: torch.optim.Optimizer, opt_param_scheduler: Any) -> None:
     """Save a model checkpoint."""
     args = get_args()
 
@@ -471,7 +469,7 @@ def save_checkpoint_tensorizer(iteration: int, model: torch.nn.Module,
 
 
 def load_checkpoint_tensorizer(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-                               opt_param_scheduler: OptimizerParamScheduler, load_arg: str = 'load', strict: bool = True) -> int:
+                               opt_param_scheduler: Any, load_arg: str = 'load', strict: bool = True) -> int:
     """Load a model checkpoint and return the iteration.
     strict (bool): whether to strictly enforce that the keys in
         :attr:`state_dict` of the checkpoint match the names of
@@ -621,7 +619,7 @@ def load_checkpoint_tensorizer(model: torch.nn.Module, optimizer: torch.optim.Op
 
 
 def save_checkpoint(iteration: int, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-                    opt_param_scheduler: OptimizerParamScheduler) -> None:
+                    opt_param_scheduler: Any) -> None:
     """Save a model checkpoint."""
     args = get_args()
 
@@ -903,7 +901,7 @@ def load_args_from_checkpoint(args, load_arg='load'):
 
 
 def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-                    opt_param_scheduler: OptimizerParamScheduler, load_arg: str = 'load', strict: bool = True) -> int:
+                    opt_param_scheduler: Any, load_arg: str = 'load', strict: bool = True) -> int:
     """Load a model checkpoint and return the iteration.
     strict (bool): whether to strictly enforce that the keys in
         :attr:`state_dict` of the checkpoint match the names of
