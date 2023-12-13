@@ -78,7 +78,7 @@ def check_checkpoint_args(checkpoint_args):
 def ensure_directory_exists(filename):
     """Build filename's path if it does not already exists."""
     dirname = os.path.dirname(filename)
-    os.makedirs(dirname, exist_ok=True)
+    os.makedirs(dirname, exist_ok = True)
 
 
 def get_checkpoint_name(checkpoints_path, iteration, release=False,
@@ -103,10 +103,10 @@ def get_checkpoint_name(checkpoints_path, iteration, release=False,
     # data parallel rank.
     if not pipeline_parallel:
         common_path = os.path.join(checkpoints_path, directory,
-                                   f'mp_rank_{tensor_rank:02d}')
+                            f'mp_rank_{tensor_rank:02d}')
     else:
         common_path = os.path.join(checkpoints_path, directory,
-                                   f'mp_rank_{tensor_rank:02d}_{pipeline_rank:03d}')
+                        f'mp_rank_{tensor_rank:02d}_{pipeline_rank:03d}')
 
     return os.path.join(common_path, "model_optim_rng.pt")
 
@@ -143,6 +143,7 @@ def find_checkpoint_rank_0(checkpoints_path, iteration, release=False):
 
 
 def get_checkpoint_tracker_filename(checkpoints_path):
+
     """Tracker file rescords the latest chckpoint during
     training to restart from."""
     return os.path.join(checkpoints_path, 'latest_checkpointed_iteration.txt')
@@ -457,7 +458,7 @@ def save_checkpoint_tensorizer(iteration: int, model: torch.nn.Module,
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
 
-    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}'
+    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}' \
                  .format(iteration, args.save))
 
     # And update the latest iteration
@@ -675,7 +676,7 @@ def save_checkpoint(iteration: int, model: torch.nn.Module, optimizer: torch.opt
         ensure_directory_exists(checkpoint_name)
         torch.save(state_dict, checkpoint_name)
 
-    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}'
+    print_rank_0('  successfully saved checkpoint at iteration {:7d} to {}' \
                  .format(iteration, args.save))
 
     # Wait so everyone is done (necessary)
@@ -720,7 +721,7 @@ def _transpose_first_dim(t, num_splits, num_splits_first, model):
         intermediate_shape = \
             (num_attention_heads_per_partition,
              hidden_size_per_attention_head, num_splits) +\
-            input_shape[1:]
+             input_shape[1:]
 
         t = t.view(*intermediate_shape)
         t = t.transpose(1, 2).contiguous()
@@ -728,14 +729,13 @@ def _transpose_first_dim(t, num_splits, num_splits_first, model):
 
     return t
 
-
 def fix_query_key_value_ordering(model, checkpoint_version):
     """Fix up query/key/value matrix ordering if checkpoint
     version is smaller than 2.0
     """
     if checkpoint_version < 2.0:
         if isinstance(model, list):
-            assert len(model) == 1
+            assert len(model)==1
             model = model[0]
         for name, param in model.named_parameters():
             if name.endswith(('.query_key_value.weight', '.query_key_value.bias')):
@@ -757,7 +757,7 @@ def fix_query_key_value_ordering(model, checkpoint_version):
                     sys.exit()
                 param.data.copy_(fixed_param)
         print_rank_0(" succesfully fixed query-key-values ordering for"
-                     " checkpoint version {}".format(checkpoint_version))
+                    " checkpoint version {}".format(checkpoint_version))
 
 
 def _load_base_checkpoint(load_dir, rank0=False):
@@ -851,12 +851,7 @@ def load_args_from_checkpoint(args, load_arg='load'):
 
     # One-off conversion for foundation models
     if hasattr(checkpoint_args, 'disable_bias_linear'):
-        setattr(
-            checkpoint_args,
-            'add_bias_linear',
-            not getattr(
-                checkpoint_args,
-                'disable_bias_linear'))
+        setattr(checkpoint_args, 'add_bias_linear', not getattr(checkpoint_args, 'disable_bias_linear'))
 
     def _set_arg(arg_name, old_arg_name=None, force=False):
         if not force and getattr(args, arg_name, None) is not None:
@@ -900,8 +895,7 @@ def load_args_from_checkpoint(args, load_arg='load'):
     return args, checkpoint_args
 
 
-def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-                    opt_param_scheduler: Any, load_arg: str = 'load', strict: bool = True) -> int:
+def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', strict=True):
     """Load a model checkpoint and return the iteration.
     strict (bool): whether to strictly enforce that the keys in
         :attr:`state_dict` of the checkpoint match the names of
@@ -991,7 +985,7 @@ def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
 
             # Load scheduler.
             if opt_param_scheduler is not None:
-                if 'lr_scheduler' in state_dict:  # backward compatbility
+                if 'lr_scheduler' in state_dict: # backward compatbility
                     opt_param_scheduler.load_state_dict(state_dict['lr_scheduler'])
                 else:
                     opt_param_scheduler.load_state_dict(state_dict['opt_param_scheduler'])
@@ -1032,7 +1026,7 @@ def load_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
 
 
 def load_biencoder_checkpoint(model, only_query_model=False,
-                              only_context_model=False, custom_load_path=None):
+        only_context_model=False, custom_load_path=None):
     """
     selectively load retrieval models for indexing/retrieving
     from saved checkpoints

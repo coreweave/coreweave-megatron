@@ -170,9 +170,9 @@ def pretrain(train_valid_test_dataset_provider,
         iteration = 0
         if args.do_train and args.train_iters > 0:
             iteration = train(forward_step_func,
-                              model, optimizer, opt_param_scheduler,
-                              train_data_iterator, valid_data_iterator,
-                              process_non_loss_data_func)
+                            model, optimizer, opt_param_scheduler,
+                            train_data_iterator, valid_data_iterator,
+                            process_non_loss_data_func)
 
         print_datetime('after training is done')
 
@@ -222,7 +222,7 @@ def update_train_iters(args):
         # Constant phase
         # Note that we throw away any partial last batch.
         iterations += (args.train_samples - consumed_samples) // \
-            args.global_batch_size
+                      args.global_batch_size
         args.train_iters = iterations
 
     print_rank_0('setting training iterations to {}'.format(args.train_iters))
@@ -272,7 +272,7 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
                 world_size = mpu.get_pipeline_model_parallel_world_size()
                 pre_process = rank == 0 or rank == split_rank
                 post_process = (rank == (split_rank - 1)) or (
-                    rank == (world_size - 1))
+                        rank == (world_size - 1))
                 add_encoder = mpu.is_pipeline_stage_before_split()
                 add_decoder = mpu.is_pipeline_stage_after_split()
             if args.use_tensorizer and args.load:
@@ -325,10 +325,10 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
     if mpu.get_data_parallel_rank() == 0:
         print(' > number of parameters on (tensor, pipeline) '
               'model parallel rank ({}, {}): {}'.format(
-                  mpu.get_tensor_model_parallel_rank(),
-                  mpu.get_pipeline_model_parallel_rank(),
-                  sum([sum([p.nelement() for p in model_module.parameters()])
-                       for model_module in model])), flush=True)
+            mpu.get_tensor_model_parallel_rank(),
+            mpu.get_pipeline_model_parallel_rank(),
+            sum([sum([p.nelement() for p in model_module.parameters()])
+                 for model_module in model])), flush=True)
 
     # GPU allocation.
     if not args.use_tensorizer or args.load is None:
@@ -466,7 +466,7 @@ def setup_model_and_optimizer(model_provider_func,
 
     # get model without FP16 and/or TorchDDP wrappers
     if args.iteration == 0 and len(unwrapped_model) == 1 \
-            and hasattr(unwrapped_model[0], 'init_state_dict_from_bert'):
+        and hasattr(unwrapped_model[0], 'init_state_dict_from_bert'):
         print_rank_0("Initializing ICT from pretrained BERT model")
         unwrapped_model[0].init_state_dict_from_bert()
         if args.fp16:
@@ -538,8 +538,8 @@ def train_step(forward_step_func, data_iterator,
     # Update learning rate.
     if update_successful:
         increment = get_num_microbatches() * \
-            args.micro_batch_size * \
-            args.data_parallel_size
+                    args.micro_batch_size * \
+                    args.data_parallel_size
         opt_param_scheduler.step(increment=increment)
         skipped_iter = 0
     else:
@@ -590,8 +590,8 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
         else:
             value = loss_dict[key].float().sum().item()
             is_nan = value == float('inf') or \
-                value == -float('inf') or \
-                value != value
+                     value == -float('inf') or \
+                     value != value
             got_nan = got_nan or is_nan
     total_loss_dict[nan_iters_key] = total_loss_dict.get(
         nan_iters_key, 0) + int(got_nan)
@@ -629,7 +629,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
         get_num_microbatches()
 
     total_iterations = total_loss_dict[advanced_iters_key] + \
-        total_loss_dict[skipped_iters_key]
+                       total_loss_dict[skipped_iters_key]
 
     # Tensorboard values.
     # Timer requires all the ranks to call.
@@ -647,7 +647,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
             writer.add_scalar('batch-size vs samples', batch_size,
                               args.consumed_train_samples)
         for key in loss_dict:
-            writer.add_scalar(key, loss_dict[key], iteration)
+            writer.add_scalar(key , loss_dict[key], iteration)
             writer.add_scalar(key + ' vs samples', loss_dict[key],
                               args.consumed_train_samples)
         if args.log_loss_scale_to_tensorboard:
@@ -707,7 +707,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
             if key not in [advanced_iters_key, skipped_iters_key,
                            nan_iters_key]:
                 avg = total_loss_dict[key].item() / \
-                    float(max(1, total_loss_dict[advanced_iters_key]))
+                      float(max(1, total_loss_dict[advanced_iters_key]))
                 if avg > 0.0:
                     log_string += ' {}: {:.6E} |'.format(key, avg)
                 total_loss_dict[key] = torch.cuda.FloatTensor([0.0])
@@ -794,8 +794,8 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                        opt_param_scheduler)
         iteration += 1
         args.consumed_train_samples += mpu.get_data_parallel_world_size() * \
-            args.micro_batch_size * \
-            get_num_microbatches()
+                                       args.micro_batch_size * \
+                                       get_num_microbatches()
 
         # Logging.
         loss_scale = optimizer.get_loss_scale().item()
@@ -863,6 +863,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
             print_datetime('exiting program at iteration {}'.format(iteration))
             sys.exit()
 
+
     return iteration
 
 
@@ -915,8 +916,8 @@ def evaluate(forward_step_func,
                             key, torch.cuda.FloatTensor([0.0])) + loss_dict[key]
 
             args.consumed_valid_samples += mpu.get_data_parallel_world_size() \
-                * args.micro_batch_size \
-                * get_num_microbatches()
+                                           * args.micro_batch_size \
+                                           * get_num_microbatches()
         collected_non_loss_data = None
         if process_non_loss_data_func is not None and is_last_rank():
             collected_non_loss_data = forward_backward_func(
@@ -931,7 +932,6 @@ def evaluate(forward_step_func,
         total_loss_dict[key] /= args.eval_iters * get_num_microbatches()
 
     return total_loss_dict, collected_non_loss_data
-
 
 def evaluate_and_print_results(prefix, forward_step_func,
                                data_iterator, model,
@@ -991,7 +991,7 @@ def build_train_valid_test_datasets(build_train_valid_test_datasets_provider):
     else:
         train_samples = args.train_iters * args.global_batch_size
     eval_iters = (args.train_iters // args.eval_interval + 1) * \
-        args.eval_iters
+                 args.eval_iters
     test_iters = args.eval_iters
     train_val_test_num_samples = [train_samples,
                                   eval_iters * args.global_batch_size,
@@ -1077,19 +1077,19 @@ def build_train_valid_test_data_iterators(
 
     if train_dataloader is not None:
         train_data_iterator = iter(train_dataloader) if dl_type == 'single' \
-            else iter(cyclic_iter(train_dataloader))
+                              else iter(cyclic_iter(train_dataloader))
     else:
         train_data_iterator = None
 
     if valid_dataloader is not None:
         valid_data_iterator = iter(valid_dataloader) if dl_type == 'single' \
-            else iter(cyclic_iter(valid_dataloader))
+                              else iter(cyclic_iter(valid_dataloader))
     else:
         valid_data_iterator = None
 
     if test_dataloader is not None:
         test_data_iterator = iter(test_dataloader) if dl_type == 'single' \
-            else iter(cyclic_iter(test_dataloader))
+                             else iter(cyclic_iter(test_dataloader))
     else:
         test_data_iterator = None
 
