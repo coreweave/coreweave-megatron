@@ -10,15 +10,15 @@ import json
 
 import torch
 
-from typing import Union, Dict, List, Tuple, Any, Optional
+from collections import OrderedDict
+from typing import Union, Dict, List, Tuple, Any, Optional, Callable
 from megatron import update_num_microbatches
 from megatron.core import mpu, tensor_parallel
 from .global_vars import get_args
 from .utils import (unwrap_model,
                     print_rank_0)
 
-from tensorizer import TensorDeserializer, TensorSerializer, stream_io
-
+from tensorizer import TensorDeserializer, TensorSerializer
 
 _CHECKPOINT_VERSION = None
 
@@ -271,6 +271,22 @@ def _load_base_checkpoint_tensorizer(
     return state_dict, release, checkpoint_name
 
 
+def prepend_to_keys(state_dict: OrderedDict[str, torch.Tensor],
+                    prepend_str: str) -> OrderedDict[str, torch.Tensor]:
+    return OrderedDict((prepend_str + key, value)
+                       for key, value in state_dict.items())
+
+
+def remove_from_keys(
+        modified_dict: OrderedDict[str, torch.Tensor], prepend_str: str) -> OrderedDict[str, torch.Tensor]:
+    return OrderedDict((key[len(prepend_str):], value) for key,
+                       value in modified_dict.items()if key.startswith(prepend_str))
+
+
+def filter_func(key: str) -> Callable[[str], bool]:
+    return not any(k in key for k in ['opt', 'grads'])
+
+
 def flatten_dict_to_skeleton(
         d: Union[Dict, List], parent_key: str = "") -> Tuple[Dict[str, torch.Tensor], Union[Dict, List]]:
     flat, skel = {}, {}
@@ -334,25 +350,20 @@ def convert_parameters_to_tensors(d: Union[Dict, List]) -> Union[Dict, List]:
         return d
 
 
-def dump_optimizer(opt: torch.optim.Optimizer, checkpoint_name: str) -> None:
-    flattened, skeleton = flatten_dict_to_skeleton(opt.state_dict())
-    serializer = TensorSerializer(f'{checkpoint_name}-opt.tensors')
+def dump_optimizer(opt: torch.optim.Optimizer, checkpoint_name: str, serializer: TensorSerializer) -> None:
+    opt_state_dict = prepend_to_keys(opt.state_dict(), 'opt')
+    flattened, skeleton = flatten_dict_to_skeleton(opt_state_dict)
     serializer.write_state_dict(flattened)
-    serializer.close()
-    json.dump(skeleton, fp=open(f'{checkpoint_name}-opt.json', 'w'))
+    json.dump(skeleton, fp=open(f'{checkpoint_name}.tensors-opt.json', 'w'))
 
 
-def load_optimizer(checkpoint_name: str) -> Dict[str, Any]:
+def load_optimizer(checkpoint_name: str, deserializer: TensorDeserializer) -> Dict[str, Any]:
     opt_state_dict = json.load(
         fp=open(f'{checkpoint_name}-opt.json', 'r')
     )
-    deserializer = TensorDeserializer(
-        f'{checkpoint_name}-opt.tensors',
-        device=torch.cuda.current_device(), plaid_mode=True
-    )
     opt_state_dict = unflatten_to_skeleton(deserializer, opt_state_dict)
     opt_state_dict = convert_parameters_to_tensors(opt_state_dict)
-    deserializer.close()
+    opt_state_dict = remove_from_keys(opt_state_dict, 'opt')
     return opt_state_dict
 
 
@@ -364,25 +375,18 @@ def map_model_main_grad_to_parameters(model: torch.nn.Module) -> Dict[str, torch
     return main_grads
 
 
-def dump_main_grads(model: torch.nn.Module, checkpoint_name: str) -> None:
+def dump_main_grads(model: torch.nn.Module, serializer: TensorSerializer) -> None:
     main_grads = map_model_main_grad_to_parameters(model)
-    serializer = TensorSerializer(f'{checkpoint_name}-grad.tensors')
+    main_grads = prepend_to_keys(main_grads, 'grads')
     serializer.write_state_dict(main_grads)
-    serializer.close()
 
 
-def load_main_grads(model: torch.nn.Module, checkpoint_name: str) -> None:
-    deserializer = TensorDeserializer(
-        f'{checkpoint_name}-grad.tensors',
-        plaid_mode=True,
-        device=torch.cuda.current_device()
-    )
+def load_main_grads(model: torch.nn.Module, deserializer: TensorDeserializer) -> None:
     for name, param in model.named_parameters():
-        main_grad_value = deserializer[name]
+        main_grad_value = deserializer['grads' + name]
         if isinstance(main_grad_value, torch.nn.Parameter):
             main_grad_value = main_grad_value.data
         param.main_grad = main_grad_value
-    deserializer.close()
 
 
 def save_checkpoint_tensorizer(iteration: int, model: torch.nn.Module,
@@ -421,10 +425,13 @@ def save_checkpoint_tensorizer(iteration: int, model: torch.nn.Module,
         torch_state['checkpoint_version'] = 3.0
         torch_state['iteration'] = iteration
 
+        # Setup our serializer.
+        serializer = TensorSerializer(f"{checkpoint_name}.tensors")
+
         # Optimizer stuff.
         if not args.no_save_optim:
             if optimizer is not None:
-                dump_optimizer(optimizer, checkpoint_name)
+                dump_optimizer(optimizer, checkpoint_name, serializer)
             if opt_param_scheduler is not None:
                 torch_state['opt_param_scheduler'] = \
                     opt_param_scheduler.state_dict()
@@ -437,22 +444,23 @@ def save_checkpoint_tensorizer(iteration: int, model: torch.nn.Module,
         torch.save(torch_state, f"{checkpoint_name}")
 
         if len(model) == 1:
-            serializer = TensorSerializer(f"{checkpoint_name}.tensors")
             serializer.write_module(model[0])
-            serializer.close()
-            dump_main_grads(model[0], f"{checkpoint_name}.tensors")
+            dump_main_grads(model[0], serializer)
         else:
             for i in range(len(model)):
                 mpu.set_virtual_pipeline_model_parallel_rank(i)
-                serializer = TensorSerializer(
+                # TODO: Coalesce model shards to one tensorizer file.
+                shard_serializer = TensorSerializer(
                     f"{checkpoint_name}_shard{i}.tensors"
                 )
-                serializer.write_module(model[i])
-                serializer.close()
+                shard_serializer.write_module(model[i])
                 dump_main_grads(
                     model[i],
-                    f"{checkpoint_name}_shard{i}.tensors"
+                    shard_serializer
                 )
+                shard_serializer.close()
+
+        serializer.close()
 
     # Wait so everyone is done (necessary)
     if torch.distributed.is_initialized():
@@ -511,6 +519,12 @@ def load_checkpoint_tensorizer(model: torch.nn.Module, optimizer: torch.optim.Op
                                  checkpoint_name))
                 sys.exit()
 
+    deserializer = TensorDeserializer(
+        f"{checkpoint_name}.tensors",
+        device=torch.cuda.current_device(),
+        plaid_mode=True
+    )
+
     # Check arguments.
     if model is not None:
         assert args.consumed_train_samples == 0
@@ -530,28 +544,25 @@ def load_checkpoint_tensorizer(model: torch.nn.Module, optimizer: torch.optim.Op
 
         # Model.
         if len(model) == 1:
-            deserializer = TensorDeserializer(
-                f"{checkpoint_name}.tensors",
-                device=torch.cuda.current_device(),
-                plaid_mode=True
+            deserializer.load_into_module(
+                model[0],
+                filter_func,
             )
-            deserializer.load_into_module(model[0])
-            deserializer.close()
-            load_main_grads(model[0], f"{checkpoint_name}.tensors")
+            load_main_grads(model[0], deserializer)
         else:
             for i in range(len(model)):
                 mpu.set_virtual_pipeline_model_parallel_rank(i)
-                deserializer = TensorDeserializer(
+                shard_deserializer = TensorDeserializer(
                     f"{checkpoint_name}_shard{i}.tensors",
                     device=torch.cuda.current_device(),
                     plaid_mode=True
                 )
-                deserializer.load_into_module(model[i])
-                deserializer.close()
+                shard_deserializer.load_into_module(model[i])
                 load_main_grads(
                     model[i],
-                    f"{checkpoint_name}_shard{i}.tensors"
+                    shard_deserializer
                 )
+                shard_deserializer.close()
 
         # Fix up query/key/value matrix ordering if needed.
         checkpoint_version = get_checkpoint_version()
@@ -564,7 +575,7 @@ def load_checkpoint_tensorizer(model: torch.nn.Module, optimizer: torch.optim.Op
             try:
                 # Load state dict.
                 if optimizer is not None:
-                    optimizer.load_state_dict(load_optimizer(checkpoint_name))
+                    optimizer.load_state_dict(load_optimizer(f"{checkpoint_name}.tensors", deserializer))
 
                 # Load distributed optimizer's custom parameter state.
                 if args.use_distributed_optimizer:
@@ -592,6 +603,8 @@ def load_checkpoint_tensorizer(model: torch.nn.Module, optimizer: torch.optim.Op
         else:
             if (args.fp16 or args.bf16) and optimizer is not None:
                 optimizer.reload_model_params()
+
+    deserializer.close()
 
     # rng states.
     if not release and not args.finetune and not args.no_load_rng:
