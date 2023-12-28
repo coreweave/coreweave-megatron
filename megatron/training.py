@@ -6,12 +6,14 @@ from datetime import datetime
 import math
 import sys
 import time
+import json
+import argparse
 # The earliest we can measure the start time.
 _TRAIN_START_TIME = time.time()
 import torch
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
 
-from megatron import get_args
+from megatron import get_args, set_args
 from megatron import get_signal_handler
 from megatron import get_timers
 from megatron import get_tensorboard_writer
@@ -22,8 +24,9 @@ from megatron import update_num_microbatches
 from megatron.core import mpu, tensor_parallel
 from megatron import print_rank_0
 from megatron import print_rank_last
-from megatron.checkpointing import load_checkpoint
-from megatron.checkpointing import save_checkpoint
+from megatron.checkpointing import load_checkpoint, load_checkpoint_tensorizer
+from megatron.checkpointing import save_checkpoint, save_checkpoint_tensorizer
+from megatron.checkpointing import _load_base_checkpoint_tensorizer
 from megatron.model import Float16Module
 from megatron.model import GPTModel
 from megatron.core.enums import ModelType
@@ -33,6 +36,7 @@ from megatron.initialize import write_args_to_tensorboard
 from megatron.initialize import set_jit_fusion_options
 from megatron.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.model import DistributedDataParallel as LocalDDP
+from megatron.timers import TimerBase
 from megatron.utils import check_adlr_autoresume_termination
 from megatron.utils import unwrap_model
 from megatron.data.data_samplers import build_pretraining_data_loader
@@ -41,12 +45,27 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.utils import report_memory
 from megatron.model.vision.knn_monitor import compute_feature_bank
 
+from tensorizer import utils
 
 def print_datetime(string):
     """Note that this call will sync across all ranks."""
     torch.distributed.barrier()
     time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print_rank_0('[' + string + '] datetime: {} '.format(time_str))
+
+
+def save_tensorizer_timing(args: argparse.Namespace, timers: TimerBase, key: str) -> None:
+    if args.timing_file is not None:
+        with open(args.timing_file, 'a') as f:
+            world_size = torch.distributed.get_world_size()
+            rank = torch.distributed.get_rank()
+            json.dump({
+                'tensorizer': args.use_tensorizer,
+                f'{key}': timers._timers[key].elapsed(reset=False),
+                'world_size': world_size,
+                'rank': rank
+            }, fp=f)
+            f.write('\n')
 
 
 def pretrain(train_valid_test_dataset_provider,
@@ -225,10 +244,18 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
             # Set pre_process and post_process only after virtual rank is set.
             pre_process = mpu.is_pipeline_first_stage()
             post_process = mpu.is_pipeline_last_stage()
-            this_model = model_provider_func(
-                pre_process=pre_process,
-                post_process=post_process
-            )
+            if args.use_tensorizer and args.load is not None:
+                this_model = utils.no_init_or_tensor(lambda:
+                                                     model_provider_func(
+                                                         pre_process=pre_process,
+                                                         post_process=post_process
+                                                     )
+                                                     )
+            else:
+                this_model = model_provider_func(
+                    pre_process=pre_process,
+                    post_process=post_process
+                )
             this_model.model_type = model_type
             model.append(this_model)
     else:
@@ -248,16 +275,33 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
                         rank == (world_size - 1))
                 add_encoder = mpu.is_pipeline_stage_before_split()
                 add_decoder = mpu.is_pipeline_stage_after_split()
-            model = model_provider_func(
-                pre_process=pre_process,
-                post_process=post_process,
-                add_encoder=add_encoder,
-                add_decoder=add_decoder)
+            if args.use_tensorizer and args.load:
+                model = utils.no_init_or_tensor(lambda:
+                                                model_provider_func(
+                                                    pre_process=pre_process,
+                                                    post_process=post_process,
+                                                    add_encoder=add_encoder,
+                                                    add_decoder=add_decoder)
+                                                )
+            else:
+                model = model_provider_func(
+                    pre_process=pre_process,
+                    post_process=post_process,
+                    add_encoder=add_encoder,
+                    add_decoder=add_decoder)
         else:
-            model = model_provider_func(
-                pre_process=pre_process,
-                post_process=post_process
-            )
+            if args.use_tensorizer and args.load is not None:
+                model = utils.no_init_or_tensor(lambda:
+                                                model_provider_func(
+                                                    pre_process=pre_process,
+                                                    post_process=post_process
+                                                )
+                                                )
+            else:
+                model = model_provider_func(
+                    pre_process=pre_process,
+                    post_process=post_process
+                )
         model.model_type = model_type
 
     if not isinstance(model, list):
@@ -287,8 +331,9 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
                  for model_module in model])), flush=True)
 
     # GPU allocation.
-    for model_module in model:
-        model_module.cuda(torch.cuda.current_device())
+    if not args.use_tensorizer or args.load is None:
+        for model_module in model:
+            model_module.cuda(torch.cuda.current_device())
 
     # Fp16 conversion.
     if args.fp16 or args.bf16:
@@ -374,21 +419,45 @@ def setup_model_and_optimizer(model_provider_func,
     """Setup model and optimizer."""
     args = get_args()
 
+    if args.use_tensorizer:
+        state_dict, _, _ = _load_base_checkpoint_tensorizer(args.load)
+        if state_dict is None:
+            args.load = None
+            set_args(args)
+
     model = get_model(model_provider_func, model_type)
     unwrapped_model = unwrap_model(model,
                                    (torchDDP, LocalDDP, Float16Module))
-
-    optimizer = get_megatron_optimizer(model, no_wd_decay_cond,
-                                       scale_lr_cond, lr_mult)
-    opt_param_scheduler = get_optimizer_param_scheduler(optimizer)
-
     if args.load is not None:
         timers = get_timers()
         timers('load-checkpoint', log_level=0).start(barrier=True)
-        args.iteration = load_checkpoint(model, optimizer, opt_param_scheduler)
+
+        if not args.use_tensorizer:
+            optimizer = get_megatron_optimizer(model, no_wd_decay_cond,
+                                               scale_lr_cond, lr_mult)
+            opt_param_scheduler = get_optimizer_param_scheduler(optimizer)
+            args.iteration = load_checkpoint(model, optimizer, opt_param_scheduler)
+        else:
+            # First, we load our model weights.
+            args.iteration = load_checkpoint_tensorizer(model, None, None)
+
+            # Second, we restore our optimizer.
+            optimizer = get_megatron_optimizer(model, no_wd_decay_cond,
+                                               scale_lr_cond, lr_mult)
+            opt_param_scheduler = get_optimizer_param_scheduler(optimizer)
+            load_checkpoint_tensorizer(
+                None,
+                optimizer,
+                opt_param_scheduler
+            )
+
         timers('load-checkpoint').stop(barrier=True)
+        save_tensorizer_timing(args, timers, 'load-checkpoint')
         timers.log(['load-checkpoint'])
     else:
+        optimizer = get_megatron_optimizer(model, no_wd_decay_cond,
+                                           scale_lr_cond, lr_mult)
+        opt_param_scheduler = get_optimizer_param_scheduler(optimizer)
         args.iteration = 0
 
     # We only support local DDP with multiple micro-batches.
@@ -404,7 +473,6 @@ def setup_model_and_optimizer(model_provider_func,
             optimizer.reload_model_params()
 
     return model, optimizer, opt_param_scheduler
-
 
 
 def train_step(forward_step_func, data_iterator,
@@ -669,11 +737,26 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
 
 def save_checkpoint_and_time(iteration, model, optimizer, opt_param_scheduler):
     timers = get_timers()
+    args = get_args()
     # Extra barrier is added to make sure
     # all ranks report the max time.
     timers('save-checkpoint', log_level=0).start(barrier=True)
-    save_checkpoint(iteration, model, optimizer, opt_param_scheduler)
+    if not args.use_tensorizer:
+        save_checkpoint(
+            iteration,
+            model,
+            optimizer,
+            opt_param_scheduler
+        )
+    else:
+        save_checkpoint_tensorizer(
+            iteration,
+            model,
+            optimizer,
+            opt_param_scheduler
+        )
     timers('save-checkpoint').stop(barrier=True)
+    save_tensorizer_timing(args, timers, 'save-checkpoint')
     timers.log(['save-checkpoint'])
 
 
